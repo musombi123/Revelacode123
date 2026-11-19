@@ -9,10 +9,11 @@ from legend_core.engine import compose, find_template
 from legend_core.github_home import GitHubHomeError, submit_template, sync_library
 from legend_core.store import TemplateStore
 from legend_core.teacher import propose_template, teacher_configured
-from legend_core.tlang import TemplateError, parse_document, validate_template
+from legend_core.tlang import TemplateError, parse_document, validate_template, execute
+from legend_core.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
 
 ROOT=Path(__file__).resolve().parent
-STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))
+STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))\nDEVOUR=DiscoveryCatalog()
 HOME_REPO=os.getenv("LEGEND_HOME_REPO","musombi123/Revelacode123")
 HOME_BRANCH=os.getenv("LEGEND_HOME_BRANCH","main")
 CHILD_ID=os.getenv("LEGEND_CHILD_ID","")
@@ -214,6 +215,91 @@ def huggingface_style_inference(model_id: str,body: dict):
     else:
         raise HTTPException(422,"inputs must be a task string or {task, inputs} object")
     return {"model":model_id,"result":answer}
+
+
+@app.get("/v1/devour/catalog")
+def devour_catalog(modality: str|None=None, limit: int=100):
+    return {"catalogued":DEVOUR.list(modality,limit),"stats":DEVOUR.stats()}
+
+@app.post("/v1/devour/discover")
+def devour_discover(body: dict, request: Request):
+    actor(request)
+    modality=body.get("modality")
+    if modality is not None and modality not in {"image","audio","video","music","code","multilingual","text"}:
+        raise HTTPException(422,"unsupported modality")
+    try:
+        models=discover_hf_models(modality=modality,limit=body.get("limit",50),token=os.getenv("HF_READ_TOKEN",""))
+    except Exception as exc:
+        raise HTTPException(502,"Hugging Face discovery failed: "+type(exc).__name__) from exc
+    for model in models:
+        category=model.pop("_legend_modality",modality or "text")
+        DEVOUR.upsert(model,category)
+    return {"status":"catalogued_metadata_only","models_found":len(models),"models":models,"weights_downloaded":False}
+
+@app.post("/v1/devour/conduct")
+def devour_conduct(body: dict, request: Request):
+    actor(request)
+    modality=str(body.get("modality","text")).lower()
+    task=str(body.get("task","")).strip()
+    inputs=body.get("inputs") if isinstance(body.get("inputs"),dict) else {}
+    if modality not in {"image","audio","video","music","code","multilingual","text"}:
+        raise HTTPException(422,"unsupported modality")
+    if not task or len(task)>500: raise HTTPException(422,"task must be 1–500 characters")
+    return {"modality":modality,"task":task,"teacher_conduct_prompt":conduct_prompt(modality,task,inputs),"status":"conduct_prompt_ready","raw_teacher_content_stored":False}
+
+@app.post("/v1/devour/learn")
+def devour_learn(body: dict, request: Request):
+    who=actor(request)
+    modality=str(body.get("modality","text")).lower()
+    task=str(body.get("task","")).strip()
+    inputs=body.get("inputs") if isinstance(body.get("inputs"),dict) else {}
+    triggers=body.get("triggers") if isinstance(body.get("triggers"),list) else []
+    lesson=str(body.get("lesson","")).strip()
+    model_id=str(body.get("teacher_model_id","teacher-unidentified"))
+    if modality not in {"image","audio","video","music","code","multilingual","text"}:
+        raise HTTPException(422,"unsupported modality")
+    if not task or not lesson or len(task)>500 or len(lesson)>16000:
+        raise HTTPException(422,"task and bounded lesson (max 16000 chars) are required")
+    # This endpoint ingests an explicit teacher lesson. It never fetches model weights.
+    # Extract only a testable symbolic candidate; opaque media tool adapters are rejected.
+    spec={"allowed_operations":["add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity"]}
+    base=os.getenv("LEGEND_TEACHER_BASE_URL","https://api.openai.com/v1").rstrip("/")
+    key=os.getenv("LEGEND_TEACHER_API_KEY"); model=os.getenv("LEGEND_TEACHER_MODEL")
+    if not key or not model: raise HTTPException(503,"Teacher API not configured; configure Gemini-compatible endpoint credentials.")
+    prompt=extraction_prompt(modality,lesson,task,inputs,spec)
+    payload={"model":model,"temperature":0,"response_format":{"type":"json_object"},"messages":[{"role":"system","content":"You are a method extractor. Do not fabricate tests or tool execution. Return JSON only."},{"role":"user","content":prompt}]}
+    import urllib.request
+    req=urllib.request.Request(base+"/chat/completions",data=__import__("json").dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+    try:
+        with urllib.request.urlopen(req,timeout=45) as res: teacher_payload=__import__("json").loads(res.read().decode())
+        extracted=__import__("json").loads(teacher_payload["choices"][0]["message"]["content"])
+    except Exception as exc: raise HTTPException(502,"Teacher method extraction failed: "+type(exc).__name__) from exc
+    candidate=extracted.get("candidate")
+    if not isinstance(candidate,dict): return {"status":"not_devoured","reason":extracted.get("reason","Teacher method requires unavailable tools or cannot be represented in T-Lang"),"modality":modality,"teacher_model_id":model_id,"raw_lesson_stored":False}
+    candidate["provenance"]={"kind":"teacher","teacher":"gemini-teacher","teacher_model_id":model_id,"modality":modality,"child_id":who}
+    try:
+        validate_template(candidate)
+        # Execute each declared test before accepting the candidate.
+        for case in candidate.get("tests",[]):
+            execute(candidate,case["input"])
+        record=save_candidate(candidate,who)
+    except Exception as exc:
+        DEVOUR.bump("rejected")
+        return {"status":"rejected_by_verifier","reason":str(exc)[:500],"modality":modality,"raw_lesson_stored":False}
+    DEVOUR.bump("verified")
+    DEVOUR.set_status(model_id,"method_learned")
+    if body.get("submit_home",True):
+        try:
+            child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
+            submitted=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
+            return {"status":"verified_and_submitted","template_id":record["id"],"modality":modality,"teacher_model_id":model_id,"home_submission":submitted,"raw_lesson_stored":False}
+        except Exception as exc:
+            return {"status":"verified_local_submission_failed","template_id":record["id"],"reason":type(exc).__name__,"raw_lesson_stored":False}
+    return {"status":"verified_local","template_id":record["id"],"modality":modality,"raw_lesson_stored":False}
+
+@app.get("/v1/devour/stats")
+def devour_stats():
+    return {"catalogued_models":len(DEVOUR.list(limit=500)),"devour":DEVOUR.stats(),"teacher_configured":teacher_configured(),"stored_templates":len(STORE.all())}
 
 @app.get("/v1/tlang/spec")
 def tlang_spec():
