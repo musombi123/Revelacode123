@@ -96,33 +96,38 @@ class DiscoveryCatalog:
         return values
 
 def discover_hf_models(modality: str | None = None, limit: int = 50, token: str = "") -> list[dict]:
-    """Query HF public model metadata. Paginated but bounded; never fetch model files."""
-    modalities = [modality] if modality else list(MODALITY_RULES)
-    total_limit = max(1, min(int(limit), 200))
+    """Metadata-only bounded HF catalogue search across selected modalities."""
+    requested = [modality] if modality else list(MODALITY_RULES)
+    per_category = max(1, min(int(limit), 100))
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     output, seen = [], set()
-    for category in modalities:
+    pipeline_tags = {"image": "text-to-image", "audio": "text-to-speech", "video": "text-to-video",
+                     "code": "text-generation", "text": "text-generation"}
+    for category in requested:
         terms = MODALITY_RULES.get(category)
         if not terms: continue
-        # HF search supports tags and pipeline filters. Use a small query per category.
-        params = {"limit": min(total_limit, 100), "sort": "downloads", "direction": -1}
-        if category in {"image", "audio", "video", "code", "text"}:
-            params["pipeline_tag"] = category if category in {"image", "audio", "video"} else ("text-generation" if category=="text" else "text-generation")
+        params = {"limit": per_category, "sort": "downloads", "direction": -1}
+        if category in pipeline_tags:
+            params["pipeline_tag"] = pipeline_tags[category]
+        else:
+            params["search"] = "music" if category == "music" else "multilingual"
         url = "https://huggingface.co/api/models?" + urllib.parse.urlencode(params)
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=25) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=25) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            continue
         for model in payload:
             model_id = model.get("id")
             if not model_id or model_id in seen: continue
             tags = [str(t).lower() for t in model.get("tags", [])]
-            # Category-specific metadata filtering to avoid labeling everything as text.
-            if category not in classify_model(model) and category not in tags and not any(term in " ".join(tags) for term in terms):
-                continue
+            tag_text = " ".join(tags)
+            matched = category in classify_model(model) or any(term in tag_text or term in model_id.lower() for term in terms)
+            if not matched: continue
             seen.add(model_id)
             model["_legend_modality"] = category
             output.append(model)
-            if len(output) >= total_limit: return output
     return output
 
 def extraction_prompt(modality: str, teacher_lesson: str, task: str, inputs: dict, tlang_spec: dict) -> str:
