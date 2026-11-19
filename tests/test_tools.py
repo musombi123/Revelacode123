@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest.mock import patch
 
