@@ -154,6 +154,23 @@ def _answer_text(text: str) -> dict:
         return compose(STORE.all(),template_id="math.percentage_of",inputs={"percent":p,"value":v})
     return compose(STORE.all(),task=text,inputs={})
 
+@app.post("/generate")
+@app.post("/models/{model_id:path}/generate")
+def model_generate(body: dict, model_id: str = "revelacode-legend"):
+    """Hugging Face-like model input/output envelope, backed only by T-Lang."""
+    incoming=body.get("inputs")
+    if isinstance(incoming,str):
+        result=_answer_text(incoming)
+    elif isinstance(incoming,dict):
+        task=incoming.get("task")
+        values=incoming.get("inputs",{})
+        if not isinstance(task,str) or not isinstance(values,dict):
+            raise HTTPException(422,"inputs object requires task string and optional inputs object")
+        result=compose(STORE.all(),task=task,inputs=values)
+    else:
+        raise HTTPException(422,"inputs must be a string or {task, inputs} object")
+    return {"answer":result.get("answer"),"template_used":result.get("template_id"),"verified":result.get("status")=="verified","status":result.get("status"),"message":result.get("message")}
+
 @app.get("/v1/models")
 def model_catalog():
     return {"object":"list","data":[{"id":"legend-tlang-1","object":"model","owned_by":"revelacode",
