@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac, os, re, time, uuid
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from legend_core.engine import compose, find_template
@@ -11,6 +12,7 @@ from legend_core.store import TemplateStore
 from legend_core.teacher import propose_template, teacher_configured
 from legend_core.tlang import TemplateError, parse_document, validate_template, execute
 from legend_core.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
+from legend_core.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
 
 ROOT=Path(__file__).resolve().parent
 STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))
@@ -335,3 +337,35 @@ def tlang_spec():
     return {"version":"tlang/1","storage":"one compact JSON object per line in a .tlang file",
       "allowed_operations":["add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity"],
       "rule":"Every record requires executable test vectors; Home reruns them before merge."}
+
+@app.get("/v1/tools")
+def tool_registry():
+    """Public capability metadata; never exposes credentials or private provider settings."""
+    return {"tools": tool_registry_data(), "execution_requires_auth": True}
+
+@app.post("/v1/tools/execute")
+def tool_execute(body: dict, request: Request):
+    actor(request)
+    name=body.get("tool")
+    inputs=body.get("inputs", {})
+    provider=body.get("provider")
+    if not isinstance(name,str) or name not in TOOL_CONTRACTS:
+        raise HTTPException(404,"Tool is not registered")
+    if not isinstance(inputs,dict) or len(__import__("json").dumps(inputs,ensure_ascii=False).encode("utf-8")) > 45*1024*1024:
+        raise HTTPException(413,"Tool input must be an object under 45MB")
+    # No request URL, arbitrary model ID, code string execution, or caller credentials.
+    result=execute_registered_tool(name,inputs,provider=provider)
+    if result.get("status") != "verified":
+        return result
+    return result
+
+@app.get("/v1/artifacts/{artifact_id}")
+def tool_artifact(artifact_id: str, request: Request):
+    actor(request)
+    if not re.fullmatch(r"[a-f0-9]{32}\\.(?:png|wav|mp4|json)",artifact_id):
+        raise HTTPException(404,"Artifact not found")
+    path=(TOOL_ARTIFACT_ROOT/artifact_id).resolve()
+    if TOOL_ARTIFACT_ROOT not in path.parents or not path.is_file():
+        raise HTTPException(404,"Artifact not found")
+    media= {"png":"image/png","wav":"audio/wav","mp4":"video/mp4","json":"application/json"}[path.suffix[1:]]
+    return FileResponse(path,media_type=media,filename=artifact_id)
