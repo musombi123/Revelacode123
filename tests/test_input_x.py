@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from legend_core.input_x import classify_input_x, handle_input_x
-from legend_core.tlang import parse_document, validate_template, TemplateError, dump_record
+from legend_core.vlang import parse_document, validate_template, TemplateError, dump_record
 
 ROOT = Path(__file__).resolve().parents[1]
 HOME_VLANG = parse_document((ROOT / "templates" / "library" / "seed.vlang").read_text(encoding="utf-8"))
@@ -88,7 +88,7 @@ class InputXTests(unittest.TestCase):
             self.assertIsNone(result["answer"])
 
     def test_vlang_round_trip_writes_vlang_version(self):
-        record = dict(HOME_VLANG[0])
+        record = dict(next(item for item in HOME_VLANG if item["id"] == "greeting.identity"))
         encoded = dump_record(record)
         self.assertIn('"version":"vlang/1"', encoded)
         self.assertEqual(parse_document(encoded)[0]["id"], "greeting.identity")
