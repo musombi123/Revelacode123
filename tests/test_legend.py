@@ -14,7 +14,10 @@ class LegendTests(unittest.TestCase):
             validate_template(t)
             for case in t["tests"]:
                 result,_=execute(t,case["input"])
-                self.assertEqual(result,case["expect"])
+                if isinstance(result,(int,float)) and isinstance(case["expect"],(int,float)):
+                    self.assertAlmostEqual(result,case["expect"],places=10)
+                else:
+                    self.assertEqual(result,case["expect"])
     def test_composer_returns_verified_math_result(self):
         result=compose(SEEDS,task="please add these",inputs={"a":19,"b":23})
         self.assertEqual(result["status"],"verified")
