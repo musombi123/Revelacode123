@@ -15,13 +15,13 @@ from vorax.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, e
 from vorax.vault import mirror_home_and_artifacts, VaultError\nfrom vorax.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
 from vorax.input_x import classify_input_x, handle_input_x, discover_method_sources
 
-ROOT=Path(__file__).resolve().parent
+ROOT=Path(__file__).resolve().parents[1]
 STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))
 DEVOUR=DiscoveryCatalog()
 HOME_REPO=os.getenv("LEGEND_HOME_REPO","musombi123/Revelacode123")
 HOME_BRANCH=os.getenv("LEGEND_HOME_BRANCH","main")
-CHILD_ID=os.getenv("LEGEND_CHILD_ID","")
-CHILD_KEY=os.getenv("LEGEND_CHILD_API_KEY","")
+CHILD_ID=os.getenv("VORAX_CHILD_ID",os.getenv("LEGEND_CHILD_ID",""))
+CHILD_KEY=os.getenv("VORAX_CHILD_API_KEY",os.getenv("LEGEND_CHILD_API_KEY",""))
 ADMIN_KEY=os.getenv("LEGEND_ADMIN_API_KEY","")
 app=FastAPI(title="REVELACODE VORAX",version="0.2.0",description="One Input X; Home-first V-Lang execution with bounded registered tools.")
 origins=[x.strip() for x in os.getenv("LEGEND_CORS_ORIGINS","*").split(",") if x.strip()]
@@ -96,7 +96,7 @@ def gpu_status():
 def vault_sync(request: Request):
     actor(request)
     try:
-        records=sync_library(HOME_REPO,HOME_BRANCH)
+        records=sync_library(HOME_REPO,HOME_BRANCH,token=os.getenv("LEGEND_HOME_READ_TOKEN",""))
         return {"status":"mirrored","home_repository":HOME_REPO,**mirror_home_and_artifacts(records,TOOL_ARTIFACT_ROOT)}
     except VaultError as exc: raise HTTPException(503,str(exc)) from exc
     except Exception as exc: raise HTTPException(502,"Vault mirror failed: "+type(exc).__name__) from exc

@@ -19,17 +19,17 @@ def _api(method,path,token=None,body=None):
         raise GitHubHomeError(f"GitHub API {method} failed ({exc.code}): {detail[:400]}") from exc
     except urllib.error.URLError as exc: raise GitHubHomeError("GitHub API unavailable: "+type(exc).__name__) from exc
 
-def sync_library(repo: str,branch: str="main")->list[dict]:
+def sync_library(repo: str,branch: str="main",token: str="")->list[dict]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repo): raise ValueError("Invalid Home repository")
-    tree=_api("GET",f"/repos/{repo}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
+    tree=_api("GET",f"/repos/{repo}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1",token)
     if tree.get("truncated"): raise GitHubHomeError("Home tree is truncated; refusing a partial sync")
     paths=[x["path"] for x in tree.get("tree",[]) if x.get("type")=="blob" and x.get("path","").startswith("templates/library/") and x["path"].endswith((".vlang",".tlang"))]
     result=[]
     for path in paths:
-        url=f"https://raw.githubusercontent.com/{repo}/{urllib.parse.quote(branch,safe='')}/{urllib.parse.quote(path,safe='/')}"
-        req=urllib.request.Request(url,headers={"User-Agent":"RevelaCode-Legend/0.1"})
         try:
-            with urllib.request.urlopen(req,timeout=20) as res: result.extend(parse_document(res.read().decode("utf-8")))
+            content=_api("GET",f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={urllib.parse.quote(branch,safe='')}",token)
+            if content.get("encoding")!="base64": raise GitHubHomeError(f"Home content encoding is not base64: {path}")
+            result.extend(parse_document(base64.b64decode(content["content"]).decode("utf-8")))
         except Exception as exc: raise GitHubHomeError(f"Home sync rejected {path}: {type(exc).__name__}") from exc
     return result
 

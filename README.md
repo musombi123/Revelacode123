@@ -1,3 +1,9 @@
+---
+title: VORAX Child
+sdk: docker
+app_port: 8000
+---
+
 # VORAX — One Input X
 
 VORAX is a general-purpose execution engine, not a model. It classifies one input X, resolves verified V-Lang procedures from Home, calls registered providers, and reports success only when execution evidence is independently verified.
