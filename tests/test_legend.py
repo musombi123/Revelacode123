@@ -3,6 +3,7 @@ from pathlib import Path
 from legend_core.tlang import parse_document,validate_template,TemplateError,execute
 from legend_core.engine import compose
 from legend_core.store import TemplateStore
+from legend_api import _answer_text
 
 ROOT=Path(__file__).resolve().parents[1]
 SEEDS=parse_document((ROOT/"templates/library/seed.tlang").read_text(encoding="utf-8"))
@@ -23,6 +24,10 @@ class LegendTests(unittest.TestCase):
         self.assertEqual(result["status"],"verified")
         self.assertEqual(result["answer"],42)
         self.assertTrue(result["proof"])
+    def test_openai_compatible_text_bridge_executes_supported_math(self):
+        result=_answer_text("What is 8 * 7?")
+        self.assertEqual(result["status"],"verified")
+        self.assertEqual(result["answer"],56)
     def test_unknown_does_not_guess(self):
         result=compose(SEEDS,task="explain the origin of consciousness",inputs={})
         self.assertEqual(result["status"],"unknown")
