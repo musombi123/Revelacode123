@@ -22,3 +22,13 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Compile Python sources
         run: python -m compileall -q legend_core legend_api.py scripts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        working-directory: revelacode-frontend
+        run: npm install --no-audit --no-fund
+      - name: Build Legend frontend
+        working-directory: revelacode-frontend
+        run: npm run build
