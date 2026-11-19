@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from legend_core.engine import compose
+from legend_core.engine import compose, find_template
 from legend_core.github_home import GitHubHomeError, submit_template, sync_library
 from legend_core.store import TemplateStore
 from legend_core.teacher import propose_template, teacher_configured
@@ -148,6 +148,16 @@ def _answer_text(text: str) -> dict:
             a,b=(float(value) for value in match.groups())
             a=int(a) if a.is_integer() else a; b=int(b) if b.is_integer() else b
             return compose(STORE.all(),template_id=template_id,inputs={names[0]:a,names[1]:b})
+    # Bounded numeric extraction for matched procedures with declared numeric inputs.
+    # It accepts exactly the number of values declared by the selected template.
+    match,reason=find_template(text,STORE.all())
+    if match:
+        values=re.findall(r"(?<![a-z])[-+]?\\d+(?:\\.\\d+)?(?![a-z])",folded)
+        keys=list(match["inputs"])
+        if len(values)==len(keys) and all(kind in {"number","integer"} for kind in match["inputs"].values()):
+            parsed=[float(v) for v in values]
+            parsed=[int(v) if v.is_integer() else v for v in parsed]
+            return compose(STORE.all(),template_id=match["id"],inputs=dict(zip(keys,parsed)))
     percent=re.search(r"(-?\d+(?:\.\d+)?)\s*%\s*(?:of)\s*(-?\d+(?:\.\d+)?)",folded)
     if percent:
         p,v=(float(value) for value in percent.groups())
@@ -155,7 +165,6 @@ def _answer_text(text: str) -> dict:
     return compose(STORE.all(),task=text,inputs={})
 
 @app.post("/generate")
-@app.post("/models/{model_id:path}/generate")
 def model_generate(body: dict, model_id: str = "revelacode-legend"):
     """Hugging Face-like model input/output envelope, backed only by T-Lang."""
     incoming=body.get("inputs")
