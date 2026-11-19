@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "blocked_children": [],
+  "rejection_counts": {},
+  "policy": "A child is trusted only when its HMAC verifies against the LEGEND_CHILD_HMAC_KEYS Actions secret. Never commit child secrets here."
+}

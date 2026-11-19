@@ -1,0 +1,1112 @@
+[
+  {
+    "id": "text.trim",
+    "version": 1,
+    "domain": "text",
+    "intent": "Trim surrounding whitespace",
+    "triggers": [
+      "trim",
+      "whitespace"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.trim",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "  RevelaCode  "
+        },
+        "expected": "RevelaCode"
+      },
+      {
+        "inputs": {
+          "value": "\tLegend\n"
+        },
+        "expected": "Legend"
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.lower",
+    "version": 1,
+    "domain": "text",
+    "intent": "Convert text to lowercase",
+    "triggers": [
+      "lowercase",
+      "case"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.lower",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "RevelaCODE"
+        },
+        "expected": "revelacode"
+      },
+      {
+        "inputs": {
+          "value": "KENYA 123"
+        },
+        "expected": "kenya 123"
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.upper",
+    "version": 1,
+    "domain": "text",
+    "intent": "Convert text to uppercase",
+    "triggers": [
+      "uppercase",
+      "case"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.upper",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "RevelaCode"
+        },
+        "expected": "REVELACODE"
+      },
+      {
+        "inputs": {
+          "value": "kenya 123"
+        },
+        "expected": "KENYA 123"
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.word_count",
+    "version": 1,
+    "domain": "text",
+    "intent": "Count whitespace-separated words",
+    "triggers": [
+      "word count",
+      "count words"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.word_count",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "Build with purpose"
+        },
+        "expected": 3
+      },
+      {
+        "inputs": {
+          "value": ""
+        },
+        "expected": 0
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.contains",
+    "version": 1,
+    "domain": "text",
+    "intent": "Check whether text contains a literal phrase",
+    "triggers": [
+      "contains",
+      "substring"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      },
+      "needle": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.contains",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          },
+          "needle": {
+            "$ref": "input.needle"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "RevelaCode Legend",
+          "needle": "Legend"
+        },
+        "expected": true
+      },
+      {
+        "inputs": {
+          "value": "RevelaCode",
+          "needle": "legend"
+        },
+        "expected": false
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.slug",
+    "version": 1,
+    "domain": "text",
+    "intent": "Convert text into a basic lowercase URL slug",
+    "triggers": [
+      "slug",
+      "url"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.slug",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "RevelaCode Legend!"
+        },
+        "expected": "revelacode-legend"
+      },
+      {
+        "inputs": {
+          "value": "  Hello, World  "
+        },
+        "expected": "hello-world"
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.split",
+    "version": 1,
+    "domain": "text",
+    "intent": "Split text using a literal separator",
+    "triggers": [
+      "split",
+      "separate"
+    ],
+    "inputs": {
+      "value": {
+        "type": "string",
+        "required": true
+      },
+      "separator": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.split",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          },
+          "separator": {
+            "$ref": "input.separator"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": "a,b,c",
+          "separator": ","
+        },
+        "expected": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "inputs": {
+          "value": "one|two",
+          "separator": "|"
+        },
+        "expected": [
+          "one",
+          "two"
+        ]
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "text.join",
+    "version": 1,
+    "domain": "text",
+    "intent": "Join strings with a literal separator",
+    "triggers": [
+      "join",
+      "combine strings"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      },
+      "separator": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "text.join",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          },
+          "separator": {
+            "$ref": "input.separator"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            "Revela",
+            "Code"
+          ],
+          "separator": ""
+        },
+        "expected": "RevelaCode"
+      },
+      {
+        "inputs": {
+          "values": [
+            "a",
+            "b",
+            "c"
+          ],
+          "separator": " / "
+        },
+        "expected": "a / b / c"
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.add",
+    "version": 1,
+    "domain": "math",
+    "intent": "Add a list of finite numbers",
+    "triggers": [
+      "add",
+      "sum"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.add",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            1,
+            2,
+            3
+          ]
+        },
+        "expected": 6
+      },
+      {
+        "inputs": {
+          "values": [
+            10,
+            20,
+            12
+          ]
+        },
+        "expected": 42
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.subtract",
+    "version": 1,
+    "domain": "math",
+    "intent": "Subtract the right number from the left",
+    "triggers": [
+      "subtract",
+      "difference"
+    ],
+    "inputs": {
+      "left": {
+        "type": "number",
+        "required": true
+      },
+      "right": {
+        "type": "number",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.subtract",
+        "args": {
+          "left": {
+            "$ref": "input.left"
+          },
+          "right": {
+            "$ref": "input.right"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "left": 10,
+          "right": 3
+        },
+        "expected": 7
+      },
+      {
+        "inputs": {
+          "left": 5,
+          "right": 8
+        },
+        "expected": -3
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.multiply",
+    "version": 1,
+    "domain": "math",
+    "intent": "Multiply a list of finite numbers",
+    "triggers": [
+      "multiply",
+      "product"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.multiply",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            2,
+            3,
+            4
+          ]
+        },
+        "expected": 24
+      },
+      {
+        "inputs": {
+          "values": [
+            5,
+            0,
+            8
+          ]
+        },
+        "expected": 0
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.divide",
+    "version": 1,
+    "domain": "math",
+    "intent": "Divide the left number by the right",
+    "triggers": [
+      "divide",
+      "quotient"
+    ],
+    "inputs": {
+      "left": {
+        "type": "number",
+        "required": true
+      },
+      "right": {
+        "type": "number",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.divide",
+        "args": {
+          "left": {
+            "$ref": "input.left"
+          },
+          "right": {
+            "$ref": "input.right"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "left": 8,
+          "right": 2
+        },
+        "expected": 4
+      },
+      {
+        "inputs": {
+          "left": 9,
+          "right": 4
+        },
+        "expected": 2.25
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.mean",
+    "version": 1,
+    "domain": "math",
+    "intent": "Calculate the arithmetic mean of numbers",
+    "triggers": [
+      "mean",
+      "average"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.mean",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            2,
+            4,
+            6
+          ]
+        },
+        "expected": 4
+      },
+      {
+        "inputs": {
+          "values": [
+            10,
+            20
+          ]
+        },
+        "expected": 15
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.min",
+    "version": 1,
+    "domain": "math",
+    "intent": "Find the smallest number in a list",
+    "triggers": [
+      "minimum",
+      "smallest"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.min",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            9,
+            2,
+            5
+          ]
+        },
+        "expected": 2
+      },
+      {
+        "inputs": {
+          "values": [
+            -4,
+            8,
+            0
+          ]
+        },
+        "expected": -4
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.max",
+    "version": 1,
+    "domain": "math",
+    "intent": "Find the largest number in a list",
+    "triggers": [
+      "maximum",
+      "largest"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.max",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            9,
+            2,
+            5
+          ]
+        },
+        "expected": 9
+      },
+      {
+        "inputs": {
+          "values": [
+            -4,
+            8,
+            0
+          ]
+        },
+        "expected": 8
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.round",
+    "version": 1,
+    "domain": "math",
+    "intent": "Round a number to a chosen decimal precision",
+    "triggers": [
+      "round",
+      "decimal"
+    ],
+    "inputs": {
+      "value": {
+        "type": "number",
+        "required": true
+      },
+      "digits": {
+        "type": "integer",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.round",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          },
+          "digits": {
+            "$ref": "input.digits"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": 3.14159,
+          "digits": 2
+        },
+        "expected": 3.14
+      },
+      {
+        "inputs": {
+          "value": 12.6,
+          "digits": 0
+        },
+        "expected": 13
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.clamp",
+    "version": 1,
+    "domain": "math",
+    "intent": "Constrain a number within inclusive bounds",
+    "triggers": [
+      "clamp",
+      "bound"
+    ],
+    "inputs": {
+      "value": {
+        "type": "number",
+        "required": true
+      },
+      "lower": {
+        "type": "number",
+        "required": true
+      },
+      "upper": {
+        "type": "number",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.clamp",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          },
+          "lower": {
+            "$ref": "input.lower"
+          },
+          "upper": {
+            "$ref": "input.upper"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": 12,
+          "lower": 0,
+          "upper": 10
+        },
+        "expected": 10
+      },
+      {
+        "inputs": {
+          "value": -2,
+          "lower": 0,
+          "upper": 10
+        },
+        "expected": 0
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.modulo",
+    "version": 1,
+    "domain": "math",
+    "intent": "Calculate the remainder after division",
+    "triggers": [
+      "modulo",
+      "remainder"
+    ],
+    "inputs": {
+      "left": {
+        "type": "number",
+        "required": true
+      },
+      "right": {
+        "type": "number",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.modulo",
+        "args": {
+          "left": {
+            "$ref": "input.left"
+          },
+          "right": {
+            "$ref": "input.right"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "left": 17,
+          "right": 5
+        },
+        "expected": 2
+      },
+      {
+        "inputs": {
+          "left": 20,
+          "right": 4
+        },
+        "expected": 0
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "math.sqrt",
+    "version": 1,
+    "domain": "math",
+    "intent": "Calculate the non-negative square root",
+    "triggers": [
+      "square root"
+    ],
+    "inputs": {
+      "value": {
+        "type": "number",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "math.sqrt",
+        "args": {
+          "value": {
+            "$ref": "input.value"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "value": 9
+        },
+        "expected": 3
+      },
+      {
+        "inputs": {
+          "value": 0
+        },
+        "expected": 0
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  },
+  {
+    "id": "list.unique",
+    "version": 1,
+    "domain": "list",
+    "intent": "Remove duplicate JSON values while preserving order",
+    "triggers": [
+      "unique",
+      "deduplicate"
+    ],
+    "inputs": {
+      "values": {
+        "type": "array",
+        "required": true
+      }
+    },
+    "steps": [
+      {
+        "id": "result",
+        "op": "list.unique",
+        "args": {
+          "values": {
+            "$ref": "input.values"
+          }
+        }
+      }
+    ],
+    "output": {
+      "$ref": "step.result"
+    },
+    "tests": [
+      {
+        "inputs": {
+          "values": [
+            "a",
+            "b",
+            "a"
+          ]
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "inputs": {
+          "values": [
+            1,
+            1,
+            2,
+            3,
+            2
+          ]
+        },
+        "expected": [
+          1,
+          2,
+          3
+        ]
+      }
+    ],
+    "provenance": {
+      "kind": "seed",
+      "source_label": "RevelaCode Legend deterministic seed library"
+    }
+  }
+]
