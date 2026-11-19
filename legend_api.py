@@ -218,6 +218,34 @@ def huggingface_style_inference(model_id: str,body: dict):
     return {"model":model_id,"result":answer}
 
 
+
+@app.post("/v1/devour/import")
+def devour_import_candidate(body: dict, request: Request):
+    who=actor(request)
+    candidate=body.get("candidate")
+    modality=str(body.get("modality","text")).lower()
+    teacher_id=str(body.get("teacher_model_id","gemini-teacher"))
+    if not isinstance(candidate,dict): raise HTTPException(422,"candidate must be a T-Lang object")
+    if modality not in {"image","audio","video","music","code","multilingual","text"}: raise HTTPException(422,"unsupported modality")
+    candidate["provenance"]={"kind":"teacher","teacher":"gemini-teacher","teacher_model_id":teacher_id,"modality":modality,"child_id":who}
+    try:
+        validate_template(candidate)
+        for case in candidate.get("tests",[]):
+            execute(candidate,case["input"])
+        record=save_candidate(candidate,who)
+    except Exception as exc:
+        DEVOUR.bump("rejected")
+        return {"status":"rejected_by_verifier","reason":str(exc)[:500],"raw_teacher_text_stored":False}
+    DEVOUR.bump("verified")
+    if body.get("submit_home",True):
+        try:
+            child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
+            result=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
+            return {"status":"verified_and_submitted","template_id":record["id"],"home_submission":result,"raw_teacher_text_stored":False}
+        except Exception as exc:
+            return {"status":"verified_local_submission_failed","template_id":record["id"],"reason":type(exc).__name__,"raw_teacher_text_stored":False}
+    return {"status":"verified_local","template_id":record["id"],"raw_teacher_text_stored":False}
+
 @app.get("/v1/devour/catalog")
 def devour_catalog(modality: str|None=None, limit: int=100):
     return {"catalogued":DEVOUR.list(modality,limit),"stats":DEVOUR.stats()}
