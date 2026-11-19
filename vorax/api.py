@@ -135,7 +135,7 @@ def learn_teacher(body: TeacherRequest,request: Request):
 @app.post("/v1/sync")
 def sync(request: Request):
     actor(request)
-    try: remote=sync_library(HOME_REPO,HOME_BRANCH)
+    try: remote=sync_library(HOME_REPO,HOME_BRANCH,token=os.getenv("LEGEND_HOME_READ_TOKEN",""))
     except GitHubHomeError as exc: raise HTTPException(502,str(exc)) from exc
     added=0
     try:
@@ -408,7 +408,7 @@ def _refresh_home_catalog():
     if time.monotonic()-_HOME_SYNC_AT < 60:
         return _HOME_SYNC_STATUS
     try:
-        remote=sync_library(HOME_REPO,HOME_BRANCH)
+        remote=sync_library(HOME_REPO,HOME_BRANCH,token=os.getenv("LEGEND_HOME_READ_TOKEN",""))
         added=0
         for record in remote:
             before=STORE.get(record["id"])

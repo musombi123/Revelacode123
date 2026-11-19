@@ -1,9 +1,6 @@
 name: Deploy VORAX Child to Hugging Face
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ["legend_api.py","legend_core/**","templates/**","Dockerfile","requirements.txt",".github/workflows/deploy-hf-child.yml"]
 permissions:
   contents: read
 jobs:
