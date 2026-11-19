@@ -85,7 +85,7 @@ def handle_input_x(value: str, catalog: list[dict], *, tool_executor=None) -> di
     elif task_type == "speech":
         inputs = {"text": value}
     elif task_type == "translation":
-        inputs = {"text": value, "target_language": "sw"}
+        inputs = {"text": value}
     else:
         inputs = {"prompt": value}
     result = compose(catalog, template_id=template_id, inputs=inputs, tool_executor=tool_executor)
