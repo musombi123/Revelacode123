@@ -15,6 +15,8 @@ export default function ProphecyDashboard() {
   const [result,setResult]=useState<any>(null);
   const [adminKey,setAdminKey]=useState('');
   const [candidate,setCandidate]=useState('');
+  const [chatPrompt,setChatPrompt]=useState('');
+  const [copied,setCopied]=useState(false);
   const [teacherTask,setTeacherTask]=useState('');
   const [teacherSchema,setTeacherSchema]=useState('{"length":"number","width":"number"}');
   const [teacherTriggers,setTeacherTriggers]=useState('rectangle area, area of rectangle');
@@ -73,6 +75,42 @@ export default function ProphecyDashboard() {
     } catch(e:any) { setError(e.message||'Teacher proposal failed'); }
     finally { setBusy(false); }
   }
+  function buildChatPrompt() {
+    setError('');
+    try {
+      const schema=JSON.parse(teacherSchema);
+      if (!schema || Array.isArray(schema) || typeof schema!=='object') throw new Error('Input schema must be a JSON object');
+      const prompt = [
+        'You are proposing one reusable procedure for REVELACODE LEGEND using T-Lang v1.',
+        'Return ONLY one valid JSON object, with no Markdown fences and no explanation.',
+        'Use exactly these top-level keys: version,id,domain,task,triggers,inputs,steps,result,tests,provenance.',
+        'Set version to "tlang/1". Use only allowlisted operations from the T-Lang specification.',
+        'Do not include Python, JavaScript, shell commands, SQL, network or file operations, loops, recursion, model weights, prompts, private data, credentials, or user data.',
+        'Provide at least TWO independent executable test vectors with exact expected outputs. Include a boundary case.',
+        'The procedure must do only the requested task. If it cannot be represented with the available operations, return a JSON object with {"error":"unsupported_by_tlang"} instead of inventing operations.',
+        'Set provenance to {"kind":"teacher","teacher":"chatgpt"}.',
+        '',
+        'TASK: '+teacherTask.trim(),
+        'INPUT SCHEMA: '+JSON.stringify(schema),
+        'TRIGGER PHRASES: '+JSON.stringify(teacherTriggers.split(',').map(x=>x.trim()).filter(Boolean)),
+        '',
+        'The Home verifier will execute every test. Passing tests does not prove universal truth; do not overclaim.'
+      ].join('\n');
+      setChatPrompt(prompt);
+      setCopied(false);
+    } catch (e:any) { setError(e.message || 'Could not build ChatGPT request'); }
+  }
+
+  async function copyChatPrompt() {
+    if (!chatPrompt) return;
+    try {
+      await navigator.clipboard.writeText(chatPrompt);
+      setCopied(true);
+    } catch {
+      setError('Clipboard is unavailable. Select and copy the request text manually.');
+    }
+  }
+
   async function syncHome() {
     setBusy(true); setError('');
     try { setResult(await call('/v1/sync',{method:'POST'},true)); await refresh(); }
@@ -127,13 +165,18 @@ export default function ProphecyDashboard() {
         <label style={s.label}>Task<input style={s.input} value={teacherTask} onChange={e=>setTeacherTask(e.target.value)} placeholder="calculate rectangle area"/></label>
         <label style={s.label}>Input schema<textarea style={s.code} rows={3} value={teacherSchema} onChange={e=>setTeacherSchema(e.target.value)}/></label>
         <label style={s.label}>Triggers<input style={s.input} value={teacherTriggers} onChange={e=>setTeacherTriggers(e.target.value)}/></label>
-        <button style={s.button} disabled={busy||!health?.teacher_configured||!teacherTask.trim()} onClick={learnTeacher}>Request + verify proposal</button>
-        {!health?.teacher_configured&&<p style={s.note}>Teacher credentials are not configured on the backend.</p>}
+        <button style={s.button} disabled={busy||!health?.teacher_configured||!teacherTask.trim()} onClick={learnTeacher}>Request + verify via teacher API</button>
+        <button style={s.buttonAlt} disabled={busy||!teacherTask.trim()} onClick={buildChatPrompt}>Generate ChatGPT learning request</button>
+        {!health?.teacher_configured&&<p style={s.note}>Teacher API is not configured. The ChatGPT request bridge below works without an API key.</p>}
       </div>
       <div style={s.panel}>
         <div style={s.kicker}>03 / CHATGPT BRIDGE</div><h2 style={s.h2}>Import T-Lang from ChatGPT</h2>
-        <p style={s.muted}>Paste one structured JSON record only—not a full chat transcript or private data.</p>
-        <textarea style={s.code} rows={10} value={candidate} onChange={e=>setCandidate(e.target.value)} placeholder='{"version":"tlang/1", ...}' spellCheck={false}/>
+        <p style={s.muted}>Generate the request in the Teacher panel, paste it into ChatGPT, then paste the returned JSON object here. Only the validated T-Lang record is stored.</p>
+        {chatPrompt&&<>
+          <label style={s.label}>ChatGPT learning request<textarea style={s.code} rows={8} value={chatPrompt} readOnly spellCheck={false}/></label>
+          <button style={s.buttonAlt} onClick={copyChatPrompt}>{copied?'Copied request':'Copy request for ChatGPT'}</button>
+        </>}
+        <label style={s.label}>Returned T-Lang JSON<textarea style={s.code} rows={10} value={candidate} onChange={e=>setCandidate(e.target.value)} placeholder='{"version":"tlang/1", ...}' spellCheck={false}/></label>
         <button style={s.buttonAlt} disabled={busy||!candidate.trim()} onClick={learnImport}>Verify + store</button>
       </div>
     </section>
