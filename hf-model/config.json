@@ -1,0 +1,10 @@
+{
+  "architectures": [
+    "LegendForReasoning"
+  ],
+  "model_type": "legend_tlang",
+  "tlang_version": "1.0",
+  "weights": false,
+  "verified_template_composition": true,
+  "api_endpoint": "/generate"
+}
