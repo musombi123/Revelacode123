@@ -64,6 +64,16 @@ Teacher output is untrusted. Passing tests only proves the tested procedure agai
 
 Never expose GitHub or teacher API keys in Vite variables or browser JavaScript. Keep them in deployment secrets.
 
+## Devouring Physics v3
+
+Legend now has bounded Hugging Face metadata discovery, modality tags, conduct prompts, a candidate-import verifier, and a Gemini teacher import bridge. See [DEVOUR_PHYSICS_V3.md](docs/DEVOUR_PHYSICS_V3.md) for API contracts, configuration, and modality limits.
+
+- `POST /legend/generate` is the RevelaAI-first route; verified templates answer, unknown remains unknown.
+- `POST /v1/devour/discover` catalogues metadata by modality without downloading weights.
+- `POST /v1/devour/conduct` returns a method-only teacher prompt.
+- `POST /v1/devour/import` accepts a bounded T-Lang candidate from Gemini, executes its declared test vectors, then submits to Home.
+- `GET /v1/devour/stats` reports the bounded catalog view and verified/rejected import counters.
+
 ## Important limits—no false claims
 
 - GitHub is durable source control and an event-driven verifier, not an always-running cognitive process. A child API/worker must run on a host; GitHub Actions runs when events occur.
