@@ -79,6 +79,7 @@ for item in changed:
     if len(records)!=1: reject("one T-Lang record is required per child file")
     t=records[0]; child=t["provenance"].get("child_id")
     if not child or child!=branch_child: reject("T-Lang child identity does not match its branch")
+    if t["provenance"].get("kind")!="teacher": reject("child submissions must identify a teacher-derived proposal")
     slug=re.sub(r"[^a-z0-9_-]+","_",t["id"].lower()).strip("_")
     expected=f"templates/library/children/{child}_{slug}.tlang"
     if path!=expected: reject("filename must be canonical for child ID and template ID")
