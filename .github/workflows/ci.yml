@@ -32,3 +32,6 @@ jobs:
       - name: Build Legend frontend
         working-directory: revelacode-frontend
         run: npm run build
+
+      - name: Build portable child container
+        run: docker build --tag revelacode-legend:ci .
