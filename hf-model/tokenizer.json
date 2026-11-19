@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "model": {
+    "type": "T-Lang",
+    "name": "LegendTemplateTokenizer",
+    "normalization": "casefold-and-strip-punctuation-for-trigger-matching"
+  },
+  "pre_tokenizer": {
+    "type": "Whitespace"
+  },
+  "decoder": {
+    "type": "T-Lang-Record"
+  },
+  "added_tokens": [],
+  "vocab": {},
+  "note": "Descriptive metadata only; T-Lang templates are executable procedures, not trained tokenizer vocabulary."
+}
