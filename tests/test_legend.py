@@ -69,8 +69,20 @@ class LegendLibraryTests(unittest.TestCase):
 class HomeSubmissionTests(unittest.TestCase):
     def test_signed_child_submission_passes_home_gate(self):
         secret = "test-only-child-secret-keep-out-of-production"
-        candidate = json.loads(json.dumps(SEEDS[0]))
-        candidate["id"] = "text.trim.child"
+        candidate = {
+            "id": "text.trim-lower.child", "version": 1, "domain": "text", "intent": "Trim then lowercase", "triggers": ["normalize"],
+            "inputs": {"value": {"type": "string", "required": True}},
+            "steps": [
+                {"id": "trimmed", "op": "text.trim", "args": {"value": {"$ref": "input.value"}}},
+                {"id": "lowered", "op": "text.lower", "args": {"value": {"$ref": "step.trimmed"}}}
+            ],
+            "output": {"$ref": "step.lowered"},
+            "tests": [
+                {"inputs": {"value": "  HELLO "}, "expected": "hello"},
+                {"inputs": {"value": " ReveLa "}, "expected": "revela"}
+            ],
+            "provenance": {"kind": "teacher", "source_label": "test method extraction"}
+        }
         signed = sign_template(candidate, "test-child", secret)
         valid, identity = verify_signature(signed, {"test-child": secret})
         self.assertTrue(valid)
