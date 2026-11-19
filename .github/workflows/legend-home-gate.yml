@@ -1,0 +1,57 @@
+name: Legend Home Admission Gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "library/templates/*.json"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  verify-and-merge:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted Home branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Locate and fetch proposal data
+        run: |
+          PR_NUMBER="$(python -c 'import json,os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"]["number"])')"
+          BASE_SHA="$(python -c 'import json,os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"]["base"]["sha"])')"
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
+
+      - name: Run trusted Home unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Verify signed T-Lang proposal
+        id: verify
+        env:
+          LEGEND_CHILD_HMAC_KEYS: ${{ secrets.LEGEND_CHILD_HMAC_KEYS }}
+        run: |
+          python scripts/verify_pr.py --base "$BASE_SHA" --head "refs/remotes/origin/pr-$PR_NUMBER"
+
+      - name: Auto-merge verified proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+      - name: Reject and close failed proposal
+        if: failure() && steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "Home rejected this T-Lang proposal. The admission gate failed; inspect the workflow log for the machine-verifiable reason."
+          gh pr close "$PR_NUMBER"
