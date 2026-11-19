@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from unittest.mock import patch
 
-from legend_core import tools
+from vorax import tools
 
 
 class ToolLayerTests(unittest.TestCase):

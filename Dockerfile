@@ -1,18 +1,12 @@
 FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=8000
-
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8000
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY legend_api.py .
-COPY legend_core ./legend_core
+RUN python -m pip install --no-cache-dir -r requirements.txt
+COPY vorax ./vorax
 COPY templates ./templates
 COPY security ./security
-
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/artifacts
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn legend_api:app --host 0.0.0.0 --port \${PORT:-8000}"]
+CMD ["sh","-c","uvicorn vorax.api:app --host 0.0.0.0 --port ${PORT:-8000}"]

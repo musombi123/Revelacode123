@@ -21,7 +21,7 @@ jobs:
       - name: Run unit and cross-child tests
         run: python -m unittest discover -s tests -v
       - name: Compile Python sources
-        run: python -m compileall -q legend_core legend_api.py scripts
+        run: python -m compileall -q vorax vorax.api.py scripts
 
       - name: Build portable child container
         run: docker build --tag revelacode-vorax:ci .

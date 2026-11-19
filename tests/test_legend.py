@@ -1,10 +1,10 @@
 import tempfile,unittest
 from pathlib import Path
-from legend_core.tlang import parse_document,validate_template,TemplateError,execute
-from legend_core.engine import compose
-from legend_core.store import TemplateStore
-from legend_api import _answer_text
-from legend_core.devour import classify_model, conduct_prompt, DiscoveryCatalog
+from vorax.tlang import parse_document,validate_template,TemplateError,execute
+from vorax.engine import compose
+from vorax.store import TemplateStore
+from vorax.api import _answer_text
+from vorax.devour import classify_model, conduct_prompt, DiscoveryCatalog
 
 ROOT=Path(__file__).resolve().parents[1]
 SEEDS=parse_document((ROOT/"templates/library/seed.tlang").read_text(encoding="utf-8"))

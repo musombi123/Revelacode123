@@ -4,10 +4,10 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 from starlette.requests import Request
-import legend_api
+import vorax.api
 
-from legend_core.input_x import classify_input_x, handle_input_x
-from legend_core.vlang import parse_document, validate_template, TemplateError, dump_record
+from vorax.input_x import classify_input_x, handle_input_x
+from vorax.vlang import parse_document, validate_template, TemplateError, dump_record
 
 ROOT = Path(__file__).resolve().parents[1]
 HOME_VLANG = parse_document((ROOT / "templates" / "library" / "seed.vlang").read_text(encoding="utf-8"))
@@ -99,7 +99,7 @@ class InputXTests(unittest.TestCase):
         self.assertEqual(parse_document(encoded)[0]["id"], "greeting.identity")
 
     def test_single_input_http_handler_uses_vorax_route(self):
-        routes = {route.path: route.methods for route in legend_api.app.routes}
+        routes = {route.path: route.methods for route in vorax.api.app.routes}
         self.assertIn("/vorax/x", routes)
         self.assertIn("POST", routes["/vorax/x"])
         scope = {
@@ -108,8 +108,8 @@ class InputXTests(unittest.TestCase):
             "query_string": b"", "headers": [],
             "client": ("testclient", 12345), "server": ("testserver", 80),
         }
-        with patch.object(legend_api, "_refresh_home_catalog", return_value={"status": "synced"}):
-            result = legend_api.vorax_input_x({"x": "hello, who are you"}, Request(scope))
+        with patch.object(vorax.api, "_refresh_home_catalog", return_value={"status": "synced"}):
+            result = vorax.api.vorax_input_x({"x": "hello, who are you"}, Request(scope))
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["engine"], "VORAX")
         self.assertEqual(result["classification"]["classifier_template"], "input.classifier")
@@ -121,12 +121,12 @@ class InputXTests(unittest.TestCase):
             "query_string": b"", "headers": [],
             "client": ("testclient", 12345), "server": ("testserver", 80),
         }
-        with patch.object(legend_api, "_refresh_home_catalog", return_value={"status": "synced"}), \
-             patch.object(legend_api, "CHILD_ID", ""), \
-             patch.object(legend_api, "CHILD_KEY", ""), \
-             patch.object(legend_api, "ADMIN_KEY", ""):
+        with patch.object(vorax.api, "_refresh_home_catalog", return_value={"status": "synced"}), \
+             patch.object(vorax.api, "CHILD_ID", ""), \
+             patch.object(vorax.api, "CHILD_KEY", ""), \
+             patch.object(vorax.api, "ADMIN_KEY", ""):
             with self.assertRaises(HTTPException) as error:
-                legend_api.vorax_input_x({"x": "generate image of a cat"}, Request(scope))
+                vorax.api.vorax_input_x({"x": "generate image of a cat"}, Request(scope))
         self.assertEqual(error.exception.status_code, 403)
 
     def test_unknown_call_tool_name_is_rejected(self):

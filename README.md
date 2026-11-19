@@ -1,81 +1,45 @@
-# REVELACODE VORAX
+# VORAX — One Input X
 
-**VORAX — Verified Operations, Reasoning, And eXpansion** — is a bounded execution engine. It does not claim to be a neural model. It classifies one user input, checks the shared Home library for a verified V-Lang method, executes registered tools where required, and returns success only after runtime verification.
+VORAX is a general-purpose execution engine, not a model. It classifies one input X, resolves verified V-Lang procedures from Home, calls registered providers, and reports success only when execution evidence is independently verified.
 
-## The Input X contract
+## Canonical runtime
 
-Every task enters through one endpoint:
+- `vorax/` is the single shared runtime used by hosted Children.
+- `vorax/api.py` exposes `GET /health`, `POST /vorax/x`, and authenticated `POST /v1/vault/sync`.
+- Hugging Face Child and AWS Child are hosting adapters around the same package.
+- GitHub repository `musombi123/Revelacode123` is the trusted Home. The HF Dataset Vault is a backup mirror only.
+- No model package, weights, `config.json`, `architectures`, or `model_type` is part of this runtime.
 
-`POST /vorax/x`
+## Hugging Face deployment
 
-```json
-{"x":"hello, who are you"}
-```
+Target Docker Space: `musombi123/revelacode-vorax-child`. Add GitHub secret `HF_SPACE_TOKEN` with permission to create/update that Space. Workflow `.github/workflows/deploy-hf-child.yml` uploads the shared runtime.
 
-The caller supplies only `x`. VORAX classifies the task, selects a Home template, resolves its registered tool calls, and returns either `verified` or `unknown`. Callers do not select models or modality-specific endpoints.
+Configure these Space secrets:
+- `VORAX_CHILD_ID=hf-child`
+- `VORAX_CHILD_API_KEY`
+- `LEGEND_HOME_REPO=musombi123/Revelacode123`
+- `LEGEND_GITHUB_TOKEN` (read-only Home access)
+- `HF_TOKEN` or `HF_INFERENCE_TOKEN` for approved inference calls
+- `HF_VAULT_TOKEN` (write access to the Dataset Vault only)
+- `HF_VAULT_REPO=musombi123/revelacode-vorax-vault`
 
-Tool-backed requests require the registered child or admin authentication headers:
-- `x-child-id`
-- `x-child-key`
+## GPU and storage: actual platform limits
 
-## Execution sequence
+This service is a Docker/FastAPI Space. Hugging Face ZeroGPU is shared RTX Pro 6000 hardware for Gradio Spaces, not a free T4 option for Docker. If a Docker Space needs a local GPU, request a paid T4 small in Space Settings (currently listed at USD 0.40/hour). The runtime reports local GPU telemetry only when `nvidia-smi` can observe a device. Current HF Inference Provider calls use remote provider compute; they do not prove local Space GPU usage.
 
-1. **Classify X:** deterministic rules identify greeting, image, logo, music, video, speech, translation, code, 3D, text, instructions, or general tasks.
-2. **Check Home:** the current Home catalogue is refreshed periodically. A V-Lang `input.classifier` method classifies X, then VORAX matches the canonical method ID.
-3. **Execute:** pure methods run in the bounded interpreter. Tool methods use the server-side registry; templates cannot select arbitrary providers, URLs, shell commands, or executable source.
-4. **Verify:** an execution is successful only when the procedure completes and every tool result explicitly returns `status=verified` and `verified=true`.
-5. **Devour on a miss:** VORAX performs bounded public metadata discovery across Hugging Face, GitHub, arXiv, and a general web search endpoint. When a teacher is configured, it can extract a candidate V-Lang method and submit it as a Home pull request. A submitted proposal is not treated as a merged Home capability.
+The Dataset Vault is created as a private Dataset repository on first authenticated sync. Hugging Face does not grant 1TB private storage to a free account; confirm plan quota or upgrade before relying on 1TB. The Vault does not replace GitHub Home's PR/CI validation gate.
 
-The discovery layer downloads no model weights. Search results and teacher output are untrusted input. Home validates the V-Lang schema, tool allowlist, provenance, and executable test vectors before merging a child proposal.
+## Vault sync
 
-## Current Home methods and real limits
+After the Space is deployed and its secrets configured, call `POST /v1/vault/sync` with `x-child-id` and `x-child-key`. It fetches canonical V-Lang methods from GitHub Home, independently verifies local PNG/WAV/MP4 artifacts, and uploads the method/artifact mirror plus a manifest to the Dataset Vault. It never mirrors unverified artifacts.
 
-The Home seed library currently contains V-Lang methods for:
-- VORAX identity/greeting (deterministic verified text)
-- image and logo generation (registered image tool)
-- music generation (registered music tool)
-- video generation (registered video tool)
-- speech synthesis (registered TTS tool)
-- English-to-Swahili translation (registered translation tool)
-- bounded arithmetic expression execution (restricted code tool)
-
-A template's contract tests use a deterministic test stub to verify its tool-call structure. **That does not create or verify a real media file.** At runtime, a provider must return a real file and the adapter must verify it. Missing credentials, unavailable models, unsupported output formats, or failed verification produce `unknown`.
-
-The current code tool evaluates bounded arithmetic expressions only. It is not a general Python/JavaScript code generator or execution sandbox. No 3D generation adapter or general-purpose text-generation adapter is registered yet. Those tasks remain `unknown` until implemented and tested.
-
-## Teacher configuration
-
-The optional teacher is an OpenAI-compatible chat-completions endpoint. It can be Gemini, a compatible hosted model, or another compatible service; VORAX does not assume a particular teacher.
-
-Set these server-side variables on a child:
-- `LEGEND_TEACHER_BASE_URL`
-- `LEGEND_TEACHER_API_KEY`
-- `LEGEND_TEACHER_MODEL`
-- `LEGEND_GITHUB_TOKEN` with the required Home contents and pull-request permissions
-- `VORAX_AUTO_LEARN=true` to enable opportunistic teacher proposals on unsupported X
-
-Teacher or Home submission failure never replaces the current `unknown` result. A method becomes shared only after the Home gate accepts and merges its pull request, then the child refreshes Home.
-
-## V-Lang and legacy compatibility
-
-New methods use `vlang/1` and `.vlang` files. The reader continues to accept existing `tlang/1` and `.tlang` records so stored methods are not lost. New Home submissions are serialized as V-Lang.
-
-The language is data-only. Its `CALL TOOL` instruction is restricted to the fixed server registry and the exact argument schema for each registered tool. It cannot make arbitrary HTTP requests or execute arbitrary code.
-
-## Local verification
+## Local checks
 
 ```bash
 python -m pip install -r requirements.txt
 python scripts/verify_library.py
 python -m unittest discover -s tests -v
-python -m compileall -q legend_core legend_api.py scripts
-uvicorn legend_api:app --host 0.0.0.0 --port 8000
+python -m compileall -q vorax scripts
 ```
 
-Health: `GET /v1/health`
-
-V-Lang specification: `GET /v1/vlang/spec`
-
-Tool registry metadata: `GET /v1/tools`
-
-The engine intentionally prefers an explicit `unknown` over a plausible but unverified answer.
+RevelaAI is not connected or modified. GO / NO-GO remains BLOCKED until live Child health, actual approved GPU telemetry, confirmed Vault quota, real PNG/WAV/MP4 uploads and Home mirror proofs are collected.
