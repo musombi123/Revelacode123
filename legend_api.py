@@ -13,7 +13,8 @@ from legend_core.tlang import TemplateError, parse_document, validate_template, 
 from legend_core.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
 
 ROOT=Path(__file__).resolve().parent
-STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))\nDEVOUR=DiscoveryCatalog()
+STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))
+DEVOUR=DiscoveryCatalog()
 HOME_REPO=os.getenv("LEGEND_HOME_REPO","musombi123/Revelacode123")
 HOME_BRANCH=os.getenv("LEGEND_HOME_BRANCH","main")
 CHILD_ID=os.getenv("LEGEND_CHILD_ID","")
