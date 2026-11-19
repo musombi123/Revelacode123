@@ -61,6 +61,17 @@ class ToolLayerTests(unittest.TestCase):
             with self.assertRaises(tools.ToolError):
                 tools.execute_tool("image.generate", {"prompt": "test", "width": 64, "height": 64})
 
+    def test_tool_dict_exposes_explicit_verified_flag(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tools.ARTIFACT_ROOT = Path(folder)
+            result = tools.execute_tool_dict("code.execute", {"source": "8 * 7", "tests": []})
+            self.assertEqual(result["status"], "verified")
+            self.assertIs(result["verified"], True)
+
+    def test_code_tool_does_not_silently_ignore_nonempty_tests(self):
+        with self.assertRaises(tools.ToolError):
+            tools.execute_tool("code.execute", {"source": "8 * 7", "tests": [{"expect": 56}]})
+
     def test_missing_provider_credentials_returns_unknown(self):
         with patch.dict(os.environ, {}, clear=True):
             result = tools.execute_tool_dict("audio.tts", {"text": "hello"})

@@ -1,15 +1,27 @@
-"""T-Lang v1: a data-only, typed language for verifiable procedures.
+"""V-Lang v1: a data-only, typed language for verifiable procedures; reads legacy T-Lang records.
 One file contains one JSON object per non-empty line. No executable code is allowed.
 """
 from __future__ import annotations
 import hashlib, json, math, re
 from typing import Any
 
-VERSION = "tlang/1"
+VERSION = "vlang/1"
+LEGACY_VERSION = "tlang/1"
 ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,79}$")
 CHILD_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,39}$")
 TYPES = {"number", "integer", "string", "boolean", "number_list"}
-OPS = {"add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity"}
+OPS = {"add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity","classify_intent"}
+# CALL TOOL is an instruction, not an arbitrary function call. Tool names and input
+# contracts are fixed here and checked again by the runtime registry.
+TOOL_SCHEMAS = {
+ "image.generate":{"required":{"prompt":"string"},"optional":{"width":"integer","height":"integer"}},
+ "audio.tts":{"required":{"text":"string"},"optional":{}},
+ "audio.transcribe":{"required":{"audio_base64":"string"},"optional":{}},
+ "video.generate":{"required":{"prompt":"string"},"optional":{}},
+ "music.generate":{"required":{"prompt":"string"},"optional":{}},
+ "translate":{"required":{"text":"string","target_language":"string"},"optional":{}},
+ "code.execute":{"required":{"source":"string"},"optional":{}},
+}
 SECRET_PATTERNS = [
  re.compile(r"(?i)\b(?:sk-[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9]{20,}|AKIA[0-9A-Z]{16})\b"),
  re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -21,7 +33,7 @@ SECRET_PATTERNS = [
 TOP_KEYS={"version","id","domain","task","triggers","inputs","steps","result","tests","provenance"}
 
 class TemplateError(ValueError):
-    """Malformed, unsafe, or unproven T-Lang record."""
+    """Malformed, unsafe, or unproven V-Lang record."""
 
 def _reject_private(value: Any, path: str="$") -> None:
     if isinstance(value,str):
@@ -53,6 +65,26 @@ def _number(value: Any) -> float:
 
 def _apply(op: str,args: list[Any]) -> Any:
     if op not in OPS: raise TemplateError(f"Unsupported operation: {op}")
+    if op=="classify_intent":
+        if len(args)!=1 or not isinstance(args[0],str) or not args[0].strip():
+            raise TemplateError("classify_intent requires one non-empty string")
+        if re.fullmatch(r"[0-9\s().+*/%-]+",args[0].strip()) and re.search(r"\d",args[0]):
+            return "code"
+        text=re.sub(r"[^a-z0-9 ]+"," ",args[0].casefold())
+        text=re.sub(r"\s+"," ",text).strip()
+        if re.search(r"\b(who are you|what are you|introduce yourself|your identity)\b",text): return "greeting"
+        if re.fullmatch(r"(hi|hello|hey|good morning|good afternoon|good evening)( vorax)?",text): return "greeting"
+        if re.search(r"\b(3d|three dimensional|blender scene|3d model)\b",text): return "3d"
+        if re.search(r"\b(logo|brand mark|brand identity)\b",text): return "logo"
+        if re.search(r"\b(voice note|read this aloud|speak this|text to speech|tts)\b",text): return "speech"
+        if re.search(r"\b(translate|translation|swahili|kiswahili)\b",text): return "translation"
+        if re.search(r"\b(music|song|soundtrack|beat|melody|instrumental)\b",text): return "music"
+        if re.search(r"\b(video|film|movie clip|short clip|animation)\b",text): return "video"
+        if re.search(r"\b(image|picture|photo|illustration|draw|paint)\b",text): return "image"
+        if re.search(r"\b(code|program|script|function|software|debug)\b",text): return "code"
+        if re.search(r"\b(how to|how do i|instructions|steps to|guide me)\b",text): return "instructions"
+        if re.search(r"\b(write|draft|essay|story|poem|paragraph|text)\b",text): return "text"
+        return "general"
     if op in {"add","subtract","multiply","divide","percentage_of","percentage_change","greater_than","less_than","equals"}:
         if len(args)!=2: raise TemplateError(f"{op} requires exactly two arguments")
         a,b=args
@@ -117,7 +149,18 @@ def _apply(op: str,args: list[Any]) -> Any:
         return args[0]
     raise TemplateError(f"Unsupported operation: {op}")
 
-def execute(template: dict,payload: dict) -> tuple[Any,list[dict]]:
+def _test_tool_executor(name: str,args: dict) -> dict:
+    """Deterministic contract stub used only while validating declared test vectors."""
+    if name not in TOOL_SCHEMAS: raise TemplateError("Tool is not registered")
+    return {"status":"verified","verified":True,"tool":name,
+            "artifact":"contract-test-artifact","mime_type":"application/x-vorax-contract"}
+
+def _tool_value(value: Any,inputs: dict,steps: dict) -> Any:
+    if isinstance(value,dict): return _resolve(value,inputs,steps)
+    if value is None or isinstance(value,(str,int,float,bool)): return value
+    raise TemplateError("Tool arguments must be literals or input/step references")
+
+def execute(template: dict,payload: dict,tool_executor=None) -> tuple[Any,list[dict]]:
     if not isinstance(payload,dict) or set(payload)!=set(template["inputs"]): raise TemplateError("Input keys must exactly match the declared input schema")
     checks={
       "number":lambda x:isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(float(x)),
@@ -129,9 +172,20 @@ def execute(template: dict,payload: dict) -> tuple[Any,list[dict]]:
         if not checks[kind](payload[name]): raise TemplateError(f"Input '{name}' must be {kind}")
     values={}; trace=[]
     for step in template["steps"]:
-        args=[_resolve(arg,payload,values) for arg in step["args"]]
-        output=_apply(step["op"],args); values[step["as"]]=output
-        trace.append({"step":step["as"],"operation":step["op"],"arguments":args,"result":output})
+        if step["op"]=="call_tool":
+            if tool_executor is None: raise TemplateError("CALL TOOL requires the registered VORAX tool executor")
+            args={key:_tool_value(value,payload,values) for key,value in step["args"].items()}
+            try: output=tool_executor(step["tool"],args)
+            except Exception as exc: raise TemplateError(f"Tool {step['tool']} failed: {type(exc).__name__}") from exc
+            if not isinstance(output,dict) or output.get("status")!="verified" or output.get("verified") is not True:
+                reason=output.get("reason","tool output was not verified") if isinstance(output,dict) else "invalid tool response"
+                raise TemplateError(f"CALL TOOL {step['tool']} did not verify: {str(reason)[:240]}")
+            trace.append({"step":step["as"],"operation":"call_tool","tool":step["tool"],"arguments":args,"result":output})
+        else:
+            args=[_resolve(arg,payload,values) for arg in step["args"]]
+            output=_apply(step["op"],args)
+            trace.append({"step":step["as"],"operation":step["op"],"arguments":args,"result":output})
+        values[step["as"]]=output
     return values[template["result"]["step"]],trace
 
 def _equal(a: Any,b: Any) -> bool:
@@ -144,7 +198,7 @@ def validate_template(t: Any,*,run_tests: bool=True) -> dict:
     if set(t)!=TOP_KEYS:
         raise TemplateError(f"Invalid top-level fields; missing={sorted(TOP_KEYS-set(t))}, extra={sorted(set(t)-TOP_KEYS)}")
     _reject_private(t)
-    if t["version"]!=VERSION: raise TemplateError(f"version must be {VERSION}")
+    if t["version"] not in {VERSION,LEGACY_VERSION}: raise TemplateError(f"version must be {VERSION} (legacy {LEGACY_VERSION} is read-only compatibility)")
     if not isinstance(t["id"],str) or not ID_RE.fullmatch(t["id"]): raise TemplateError("id must be a lowercase dotted identifier")
     for field in ("domain","task"):
         if not isinstance(t[field],str) or not t[field].strip() or len(t[field])>160: raise TemplateError(f"{field} must be a non-empty string of at most 160 characters")
@@ -160,17 +214,39 @@ def validate_template(t: Any,*,run_tests: bool=True) -> dict:
     if not isinstance(steps,list) or not 1<=len(steps)<=20: raise TemplateError("steps must contain 1 to 20 operations")
     names=set()
     for step in steps:
-        if not isinstance(step,dict) or set(step)!={"op","args","as"}: raise TemplateError("Each step must contain exactly op, args, and as")
-        if step["op"] not in OPS: raise TemplateError(f"Operation is not allowed: {step['op']}")
-        if not isinstance(step["as"],str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}",step["as"]) or step["as"] in names: raise TemplateError("Step outputs must be unique identifiers")
-        if not isinstance(step["args"],list) or len(step["args"])>12: raise TemplateError("Step args must be a list with at most 12 values")
-        for arg in step["args"]:
-            if isinstance(arg,dict):
-                if set(arg)=={"input"} and arg["input"] in inputs: continue
-                if set(arg)=={"step"} and arg["step"] in names: continue
-                raise TemplateError("Invalid or forward reference in step arguments")
-            if not (arg is None or isinstance(arg,(str,int,float,bool))): raise TemplateError("Nested objects and arrays are not valid literals")
-            if isinstance(arg,float) and not math.isfinite(arg): raise TemplateError("Non-finite literal")
+        if not isinstance(step,dict): raise TemplateError("Each step must be an object")
+        op=step.get("op")
+        if not isinstance(step.get("as"),str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}",step["as"]) or step["as"] in names: raise TemplateError("Step outputs must be unique identifiers")
+        if op=="call_tool":
+            if set(step)!={"op","tool","args","as"}: raise TemplateError("CALL TOOL steps require exactly op, tool, args, and as")
+            tool=step["tool"]; schema=TOOL_SCHEMAS.get(tool)
+            if schema is None: raise TemplateError(f"Tool is not registered: {tool}")
+            tool_args=step["args"]
+            if not isinstance(tool_args,dict): raise TemplateError("CALL TOOL args must be an object")
+            required=schema["required"]; allowed={**required,**schema["optional"]}
+            if not set(required).issubset(tool_args) or set(tool_args)-set(allowed): raise TemplateError(f"CALL TOOL {tool} arguments do not match its registered contract")
+            for key,value in tool_args.items():
+                kind=allowed[key]
+                if isinstance(value,dict):
+                    if set(value)=={"input"} and value["input"] in inputs:
+                        if inputs[value["input"]]!=kind and kind not in {"number","integer"}: raise TemplateError(f"CALL TOOL {tool}.{key} input reference has incompatible type")
+                    elif set(value)=={"step"} and value["step"] in names: pass
+                    else: raise TemplateError("Invalid or forward reference in CALL TOOL arguments")
+                elif kind=="string" and not isinstance(value,str): raise TemplateError(f"CALL TOOL {tool}.{key} must be a string")
+                elif kind=="integer" and (not isinstance(value,int) or isinstance(value,bool)): raise TemplateError(f"CALL TOOL {tool}.{key} must be an integer")
+                elif isinstance(value,(dict,list)) or value is None: raise TemplateError("CALL TOOL arguments must be bounded scalar literals or references")
+                elif isinstance(value,float) and not math.isfinite(value): raise TemplateError("Non-finite tool argument")
+        else:
+            if set(step)!={"op","args","as"}: raise TemplateError("Procedure steps require exactly op, args, and as")
+            if op not in OPS: raise TemplateError(f"Operation is not allowed: {op}")
+            if not isinstance(step["args"],list) or len(step["args"])>12: raise TemplateError("Step args must be a list with at most 12 values")
+            for arg in step["args"]:
+                if isinstance(arg,dict):
+                    if set(arg)=={"input"} and arg["input"] in inputs: continue
+                    if set(arg)=={"step"} and arg["step"] in names: continue
+                    raise TemplateError("Invalid or forward reference in step arguments")
+                if not (arg is None or isinstance(arg,(str,int,float,bool))): raise TemplateError("Nested objects and arrays are not valid literals")
+                if isinstance(arg,float) and not math.isfinite(arg): raise TemplateError("Non-finite literal")
         names.add(step["as"])
     if not isinstance(t["result"],dict) or set(t["result"])!={"step"} or t["result"]["step"] not in names: raise TemplateError("result must reference a declared step")
     tests=t["tests"]
@@ -185,7 +261,7 @@ def validate_template(t: Any,*,run_tests: bool=True) -> dict:
     if "teacher" in p and (not isinstance(p["teacher"],str) or len(p["teacher"])>64): raise TemplateError("Invalid provenance.teacher")
     if run_tests:
         for i,test in enumerate(tests):
-            try: actual,_=execute(t,test["input"])
+            try: actual,_=execute(t,test["input"],tool_executor=_test_tool_executor)
             except Exception as exc: raise TemplateError(f"Test {i+1} could not execute: {exc}") from exc
             if not _equal(actual,test["expect"]): raise TemplateError(f"Test {i+1} failed: expected {test['expect']!r}, got {actual!r}")
     return t
@@ -208,5 +284,7 @@ def fingerprint(t: dict) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 def dump_record(t: dict) -> str:
-    validate_template(t)
-    return json.dumps(t,sort_keys=True,separators=(",",":"),ensure_ascii=False)+"\n"
+    # New Home writes always use V-Lang; the parser continues reading legacy T-Lang.
+    record=dict(t); record["version"]=VERSION
+    validate_template(record)
+    return json.dumps(record,sort_keys=True,separators=(",",":"),ensure_ascii=False)+"\n"

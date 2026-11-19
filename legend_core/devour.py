@@ -130,14 +130,18 @@ def discover_hf_models(modality: str | None = None, limit: int = 50, token: str 
             output.append(model)
     return output
 
-def extraction_prompt(modality: str, teacher_lesson: str, task: str, inputs: dict, tlang_spec: dict) -> str:
-    return f"""Convert the lesson below into ONE candidate T-Lang v1 JSON template.
-The template must use only this verified allowlist: {json.dumps(tlang_spec.get('allowed_operations', []))}.
-Use only deterministic operations in the allowlist. If the method requires external image/audio/video/code execution, do NOT pretend the tool is executable in T-Lang; return a bounded candidate only if an allowed operation can represent it, otherwise return null and explain missing tool adapter.
-Template requirements: version, id, domain, task, triggers (array), inputs (typed object), steps (allowlisted operations), result, tests (at least 2 input/expect vectors), provenance (kind='teacher', teacher='gemini-teacher', modality='{modality}').
-Never invent test outputs. Choose tests with independently calculable outcomes and explain them in lesson text. No raw teacher text in candidate storage.
+def extraction_prompt(modality: str, teacher_lesson: str, task: str, inputs: dict, vlang_spec: dict) -> str:
+    return f"""Convert the method below into ONE candidate V-Lang v1 JSON template.
+The template must use only this verified operation allowlist: {json.dumps(vlang_spec.get('allowed_operations', []))}.
+For external media/code work, use a CALL TOOL step only with one registered tool and its exact typed schema:
+image.generate(prompt,width?,height?), audio.tts(text), audio.transcribe(audio_base64),
+video.generate(prompt), music.generate(prompt), translate(text,target_language), code.execute(source).
+CALL TOOL step shape is {{"op":"call_tool","tool":"registered.name","args":{{"field":{{"input":"declared_input"}}}},"as":"step_name"}}.
+No shell, arbitrary URLs, arbitrary providers, source-code execution outside the registered tool, hidden weights, or private data.
+Template requirements: version='vlang/1', id, domain, task, triggers (array), inputs (typed object), steps, result, tests (at least 2 input/expect vectors), provenance (kind='teacher', teacher='configured-teacher').
+Never invent test outputs. CALL TOOL tests validate only the registered contract; real artifacts are verified only during runtime. No raw teacher prose in candidate storage.
 Task: {task}
 Input values: {json.dumps(inputs, ensure_ascii=False)}
-Teacher lesson:
+Teacher method:
 {teacher_lesson}
 Return JSON only: {{ "candidate": object|null, "reason": string }}"""

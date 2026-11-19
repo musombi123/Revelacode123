@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64,json,os,re,sys,urllib.parse,urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from legend_core.tlang import parse_document,fingerprint
+from legend_core.vlang import parse_document,fingerprint
 
 repo=os.environ["GITHUB_REPOSITORY"]; number=os.environ["PR_NUMBER"]; token=os.environ["GITHUB_TOKEN"]
 api="https://api.github.com"
@@ -68,20 +68,21 @@ if not changed or len(changed)>5: reject("a child may submit 1–5 templates per
 proposals=[]
 for item in changed:
     path=item["filename"]
-    if not path.startswith("templates/library/children/") or not path.endswith(".tlang"):
+    if not path.startswith("templates/library/children/") or not path.endswith((".vlang",".tlang")):
         reject("template PRs may only add files under templates/library/children/")
     if item["status"]!="added": reject("published templates are immutable; submit a new version ID")
     blob=get(f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={pr['head']['sha']}")
     try:
         records=parse_document(base64.b64decode(blob["content"]).decode("utf-8"))
     except Exception as exc:
-        reject("T-Lang verifier rejected proposal: "+str(exc)[:180])
-    if len(records)!=1: reject("one T-Lang record is required per child file")
+        reject("V-Lang verifier rejected proposal: "+str(exc)[:180])
+    if len(records)!=1: reject("one V-Lang record is required per child file")
     t=records[0]; child=t["provenance"].get("child_id")
-    if not child or child!=branch_child: reject("T-Lang child identity does not match its branch")
+    if not child or child!=branch_child: reject("V-Lang child identity does not match its branch")
     if t["provenance"].get("kind")!="teacher": reject("child submissions must identify a teacher-derived proposal")
     slug=re.sub(r"[^a-z0-9_-]+","_",t["id"].lower()).strip("_")
-    expected=f"templates/library/children/{child}_{slug}.tlang"
+    extension=".vlang" if path.endswith(".vlang") else ".tlang"
+    expected=f"templates/library/children/{child}_{slug}{extension}"
     if path!=expected: reject("filename must be canonical for child ID and template ID")
     proposals.append(t)
 
@@ -90,7 +91,7 @@ if tree.get("truncated"): reject("Home tree is truncated; refusing partial dupli
 existing_ids=set(); existing_fps=set(); existing_tasks=set()
 for node in tree.get("tree",[]):
     path=node.get("path","")
-    if node.get("type")!="blob" or not path.startswith("templates/library/") or not path.endswith(".tlang"): continue
+    if node.get("type")!="blob" or not path.startswith("templates/library/") or not path.endswith((".vlang",".tlang")): continue
     blob=get(f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={pr['base']['sha']}")
     for old in parse_document(base64.b64decode(blob["content"]).decode("utf-8")):
         existing_ids.add(old["id"]); existing_fps.add(fingerprint(old))

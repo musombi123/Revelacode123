@@ -1,1 +1,1 @@
-"""RevelaCode Legend bounded symbolic composition engine."""
+"""REVELACODE VORAX verified method engine."""

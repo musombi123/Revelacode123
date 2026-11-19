@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, sqlite3
 from pathlib import Path
-from .tlang import fingerprint, validate_template
+from .vlang import fingerprint, validate_template
 
 class TemplateStore:
     def __init__(self,path: str="data/legend.sqlite3"):
