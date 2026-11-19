@@ -1,0 +1,33 @@
+name: Legend Home template gate
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "templates/library/children/**"
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+jobs:
+  verify-and-merge:
+    if: github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # Execute only the trusted verifier from the base commit, never code from the child PR.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify child proposal against Home
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python scripts/verify_pr.py
+      - name: Auto-merge verified T-Lang proposal
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$PR_NUMBER" --squash --delete-branch

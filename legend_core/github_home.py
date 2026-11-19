@@ -1,0 +1,54 @@
+"""GitHub Home sync and child-to-Home pull request submission."""
+from __future__ import annotations
+import base64,json,os,re,time,urllib.error,urllib.parse,urllib.request,uuid
+from .tlang import dump_record,parse_document
+
+class GitHubHomeError(RuntimeError): pass
+
+def _api(method,path,token=None,body=None):
+    headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","User-Agent":"RevelaCode-Legend/0.1"}
+    if token: headers["Authorization"]="Bearer "+token
+    data=json.dumps(body).encode() if body is not None else None
+    if data is not None: headers["Content-Type"]="application/json"
+    req=urllib.request.Request("https://api.github.com"+path,data=data,headers=headers,method=method)
+    try:
+        with urllib.request.urlopen(req,timeout=30) as res:
+            raw=res.read(); return json.loads(raw.decode()) if raw else {}
+    except urllib.error.HTTPError as exc:
+        detail=exc.read(2048).decode("utf-8","replace")
+        raise GitHubHomeError(f"GitHub API {method} failed ({exc.code}): {detail[:400]}") from exc
+    except urllib.error.URLError as exc: raise GitHubHomeError("GitHub API unavailable: "+type(exc).__name__) from exc
+
+def sync_library(repo: str,branch: str="main")->list[dict]:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repo): raise ValueError("Invalid Home repository")
+    tree=_api("GET",f"/repos/{repo}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
+    if tree.get("truncated"): raise GitHubHomeError("Home tree is truncated; refusing a partial sync")
+    paths=[x["path"] for x in tree.get("tree",[]) if x.get("type")=="blob" and x.get("path","").startswith("templates/library/") and x["path"].endswith(".tlang")]
+    result=[]
+    for path in paths:
+        url=f"https://raw.githubusercontent.com/{repo}/{urllib.parse.quote(branch,safe='')}/{urllib.parse.quote(path,safe='/')}"
+        req=urllib.request.Request(url,headers={"User-Agent":"RevelaCode-Legend/0.1"})
+        try:
+            with urllib.request.urlopen(req,timeout=20) as res: result.extend(parse_document(res.read().decode("utf-8")))
+        except Exception as exc: raise GitHubHomeError(f"Home sync rejected {path}: {type(exc).__name__}") from exc
+    return result
+
+def submit_template(repo: str,branch: str,child_id: str,template: dict,token: str)->dict:
+    if not token: raise GitHubHomeError("LEGEND_GITHUB_TOKEN is not configured on this child")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,39}",child_id): raise ValueError("Invalid child ID")
+    record=dict(template); provenance=dict(record.get("provenance",{}))
+    provenance.update({"kind":"teacher" if provenance.get("kind")=="teacher" else "manual","child_id":child_id})
+    record["provenance"]=provenance; content=dump_record(record)
+    slug=re.sub(r"[^a-z0-9_-]+","_",record["id"].lower()).strip("_")
+    path=f"templates/library/children/{child_id}_{slug}.tlang"
+    new_branch=f"child/{child_id}/{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    ref=_api("GET",f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(branch,safe='')}",token)
+    _api("POST",f"/repos/{repo}/git/refs",token,{"ref":"refs/heads/"+new_branch,"sha":ref["object"]["sha"]})
+    encoded=base64.b64encode(content.encode()).decode("ascii")
+    _api("PUT",f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}",token,
+         {"message":f"legend: child {child_id} proposes {record['id']}","content":encoded,"branch":new_branch})
+    pr=_api("POST",f"/repos/{repo}/pulls",token,
+       {"title":f"Legend template proposal: {record['id']}",
+        "body":f"Automated T-Lang proposal from child {child_id}. Home will verify schema, safety, duplicates, and executable tests.",
+        "head":new_branch,"base":branch})
+    return {"pull_request":pr["html_url"],"number":pr["number"],"branch":new_branch,"template_id":record["id"],"file":path}
