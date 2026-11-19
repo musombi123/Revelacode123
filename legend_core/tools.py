@@ -10,7 +10,9 @@ import json
 import os
 import re
 import struct
+import subprocess
 import time
+import zlib
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,9 +151,26 @@ def _verify_png(path: Path) -> dict[str, Any]:
     width, height = struct.unpack(">II", raw[16:24])
     if width < 1 or height < 1 or width * height > 1_048_576:
         raise ToolError("PNG dimensions are invalid or exceed safety limits")
-    if not any(raw[i:i+4] == b"IDAT" for i in range(12, len(raw)-4)):
-        raise ToolError("PNG contains no image data")
-    return {"valid": True, "format":"png", "width":width, "height":height, "pixel_data_present":True}
+    chunks=[]; offset=8; seen_end=False
+    while offset + 12 <= len(raw):
+        size=struct.unpack(">I",raw[offset:offset+4])[0]
+        kind=raw[offset+4:offset+8]
+        end=offset+12+size
+        if end>len(raw): raise ToolError("PNG chunk exceeds file boundary")
+        payload=raw[offset+8:offset+8+size]
+        crc=struct.unpack(">I",raw[offset+8+size:end])[0]
+        if zlib.crc32(kind+payload)&0xffffffff != crc: raise ToolError("PNG chunk checksum failed")
+        if kind==b"IDAT": chunks.append(payload)
+        if kind==b"IEND": seen_end=True; break
+        offset=end
+    if not chunks or not seen_end: raise ToolError("PNG image data or IEND chunk is missing")
+    decoded=zlib.decompress(b"".join(chunks))
+    bit_depth=raw[24]; color_type=raw[25]
+    channels={0:1,2:3,3:1,4:2,6:4}.get(color_type)
+    if bit_depth not in {8,16} or channels is None: raise ToolError("PNG color format is unsupported by the verifier")
+    expected=height*(1+width*channels*(bit_depth//8))
+    if len(decoded)!=expected: raise ToolError("PNG decoded pixel buffer has an invalid length")
+    return {"valid": True, "format":"png", "width":width, "height":height, "decoded_pixel_bytes":len(decoded)}
 
 def _verify_wav(path: Path) -> tuple[dict[str, Any], float]:
     try:
@@ -172,7 +191,22 @@ def _verify_mp4(path: Path) -> dict[str, Any]:
         raise ToolError("Provider output is not an MP4 container")
     if b"moov" not in raw or b"mdat" not in raw:
         raise ToolError("MP4 is missing movie metadata or media data")
-    return {"valid":True,"format":"mp4","container":"ftyp","movie_metadata":True,"media_data":True}
+    try:
+        probe=subprocess.run(
+            ["ffprobe","-v","error","-select_streams","v:0","-count_frames",
+             "-show_entries","stream=nb_read_frames,duration","-of","json",str(path)],
+            capture_output=True,text=True,timeout=8,check=True,
+        )
+        streams=json.loads(probe.stdout).get("streams",[])
+        if not streams: raise ToolError("MP4 contains no video stream")
+        frames=int(streams[0].get("nb_read_frames") or 0)
+        duration=float(streams[0].get("duration") or 0)
+        if frames<=10 or duration<=0: raise ToolError("MP4 must contain more than 10 decoded frames and positive duration")
+        return {"valid":True,"format":"mp4","frames":frames,"duration_seconds":duration}
+    except FileNotFoundError as exc:
+        raise ToolError("ffprobe is required to verify MP4 frames and duration") from exc
+    except (subprocess.SubprocessError,ValueError,KeyError,TypeError,json.JSONDecodeError) as exc:
+        raise ToolError("MP4 temporal verification failed") from exc
 
 def _run_code(source: str, tests: Any) -> ToolResult:
     # This is deliberately not arbitrary Python execution. It validates a restricted
@@ -266,8 +300,10 @@ def execute_tool(name: str, inputs: dict[str, Any], *, provider: str | None = No
         result=ToolResult("verified",name,"huggingface",output={"text":transcript},verification={"valid":True,"non_empty_transcript":True})
     elif name == "translate":
         text=_string(inputs.get("text"),"text")
-        target=_string(inputs.get("target_language"),"target_language",32)
-        data,mime=_hf(name,{"inputs":text,"parameters":{"tgt_lang":target}},timeout,binary=False)
+        target=_string(inputs.get("target_language"),"target_language",32).casefold()
+        if target not in {"sw","swahili"}:
+            raise ToolError("The configured Helsinki-NLP/opus-mt-en-sw adapter currently supports target_language=sw only")
+        data,mime=_hf(name,{"inputs":text},timeout,binary=False)
         parsed=json.loads(data.decode("utf-8"))
         translated=parsed[0].get("translation_text") if isinstance(parsed,list) and parsed and isinstance(parsed[0],dict) else None
         if not isinstance(translated,str) or not translated.strip(): raise ToolError("Translation provider returned no translated text")
