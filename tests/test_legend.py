@@ -28,6 +28,11 @@ class LegendTests(unittest.TestCase):
         result=_answer_text("What is 8 * 7?")
         self.assertEqual(result["status"],"verified")
         self.assertEqual(result["answer"],56)
+    def test_model_shaped_generate_text_returns_verified_procedure(self):
+        result=_answer_text("triangle area base 10 height 5")
+        self.assertEqual(result["status"],"verified")
+        self.assertEqual(result["answer"],25)
+        self.assertEqual(result["template_id"],"geometry.triangle_area")
     def test_unknown_does_not_guess(self):
         result=compose(SEEDS,task="explain the origin of consciousness",inputs={})
         self.assertEqual(result["status"],"unknown")
