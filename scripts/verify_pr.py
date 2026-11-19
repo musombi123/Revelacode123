@@ -72,7 +72,10 @@ for item in changed:
         reject("template PRs may only add files under templates/library/children/")
     if item["status"]!="added": reject("published templates are immutable; submit a new version ID")
     blob=get(f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={pr['head']['sha']}")
-    records=parse_document(base64.b64decode(blob["content"]).decode("utf-8"))
+    try:
+        records=parse_document(base64.b64decode(blob["content"]).decode("utf-8"))
+    except Exception as exc:
+        reject("T-Lang verifier rejected proposal: "+str(exc)[:180])
     if len(records)!=1: reject("one T-Lang record is required per child file")
     t=records[0]; child=t["provenance"].get("child_id")
     if not child or child!=branch_child: reject("T-Lang child identity does not match its branch")
