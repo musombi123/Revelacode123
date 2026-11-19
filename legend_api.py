@@ -152,7 +152,7 @@ def _answer_text(text: str) -> dict:
     # It accepts exactly the number of values declared by the selected template.
     match,reason=find_template(text,STORE.all())
     if match:
-        values=re.findall(r"(?<![a-z])[-+]?\\d+(?:\\.\\d+)?(?![a-z])",folded)
+        values=re.findall(r"(?<![a-z])[-+]?\d+(?:\.\d+)?(?![a-z])",folded)
         keys=list(match["inputs"])
         if len(values)==len(keys) and all(kind in {"number","integer"} for kind in match["inputs"].values()):
             parsed=[float(v) for v in values]
