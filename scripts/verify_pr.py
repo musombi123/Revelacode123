@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64,json,os,re,sys,urllib.parse,urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from legend_core.vlang import parse_document,fingerprint
+from vorax.vlang import parse_document,fingerprint
 
 repo=os.environ["GITHUB_REPOSITORY"]; number=os.environ["PR_NUMBER"]; token=os.environ["GITHUB_TOKEN"]
 api="https://api.github.com"
