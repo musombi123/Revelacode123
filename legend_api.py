@@ -1,4 +1,4 @@
-"""RevelaCode Legend API: deterministic composition plus optional teacher adapters."""
+"""REVELACODE VORAX API: universal Input X over verified V-Lang methods."""
 from __future__ import annotations
 import hmac, os, re, time, uuid
 from pathlib import Path
@@ -10,9 +10,10 @@ from legend_core.engine import compose, find_template
 from legend_core.github_home import GitHubHomeError, submit_template, sync_library
 from legend_core.store import TemplateStore
 from legend_core.teacher import propose_template, teacher_configured
-from legend_core.tlang import TemplateError, parse_document, validate_template, execute
+from legend_core.vlang import TemplateError, parse_document, validate_template, execute
 from legend_core.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
 from legend_core.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
+from legend_core.input_x import classify_input_x, handle_input_x, discover_method_sources
 
 ROOT=Path(__file__).resolve().parent
 STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))
@@ -22,15 +23,16 @@ HOME_BRANCH=os.getenv("LEGEND_HOME_BRANCH","main")
 CHILD_ID=os.getenv("LEGEND_CHILD_ID","")
 CHILD_KEY=os.getenv("LEGEND_CHILD_API_KEY","")
 ADMIN_KEY=os.getenv("LEGEND_ADMIN_API_KEY","")
-app=FastAPI(title="RevelaCode Legend",version="0.1.0",description="A bounded, auditable T-Lang composition engine.")
+app=FastAPI(title="REVELACODE VORAX",version="0.2.0",description="One Input X; Home-first V-Lang execution with bounded registered tools.")
 origins=[x.strip() for x in os.getenv("LEGEND_CORS_ORIGINS","*").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware,allow_origins=origins,allow_methods=["GET","POST","OPTIONS"],allow_headers=["*"])
 
 def load_local_seeds():
     folder=ROOT/"templates"/"library"
     if not folder.exists(): return
-    for path in folder.rglob("*.tlang"):
-        for record in parse_document(path.read_text(encoding="utf-8")): STORE.add(record)
+    for pattern in ("*.vlang","*.tlang"):
+        for path in folder.rglob(pattern):
+            for record in parse_document(path.read_text(encoding="utf-8")): STORE.add(record)
 load_local_seeds()
 
 class ComposeRequest(BaseModel):
@@ -72,7 +74,7 @@ def save_candidate(candidate: dict,who: str):
 
 @app.get("/v1/health")
 def health():
-    return {"status":"ok","engine":"tlang-symbolic/1","templates":len(STORE.all()),
+    return {"status":"ok","engine":"vorax-vlang/1","templates":len(STORE.all()),
       "teacher_configured":teacher_configured(),"home_repository":HOME_REPO,"model_required_for_composition":False}
 
 @app.get("/v1/templates")
@@ -169,7 +171,7 @@ def _answer_text(text: str) -> dict:
     return compose(STORE.all(),task=text,inputs={})
 
 @app.post("/generate")
-def model_generate(body: dict, model_id: str = "revelacode-legend"):
+def model_generate(body: dict, model_id: str = "revelacode-vorax"):
     """Hugging Face-like model input/output envelope, backed only by T-Lang."""
     incoming=body.get("inputs")
     if isinstance(incoming,str):
@@ -186,7 +188,7 @@ def model_generate(body: dict, model_id: str = "revelacode-legend"):
 
 @app.get("/v1/models")
 def model_catalog():
-    return {"object":"list","data":[{"id":"legend-tlang-1","object":"model","owned_by":"revelacode",
+    return {"object":"list","data":[{"id":"vorax-vlang-1","object":"model","owned_by":"revelacode",
       "capabilities":["verified-template-composition"],"weights":False}]}
 
 @app.post("/v1/chat/completions")
@@ -198,8 +200,8 @@ def openai_compatible_chat(body: dict):
     text_value=user_message.get("content","")
     if not isinstance(text_value,str): raise HTTPException(422,"User message content must be text")
     answer=_answer_text(text_value)
-    return {"id":"legend-"+uuid.uuid4().hex,"object":"chat.completion","created":int(time.time()),
-      "model":"legend-tlang-1","choices":[{"index":0,
+    return {"id":"vorax-"+uuid.uuid4().hex,"object":"chat.completion","created":int(time.time()),
+      "model":"vorax-vlang-1","choices":[{"index":0,
       "message":{"role":"assistant","content":__import__("json").dumps(answer,ensure_ascii=False)},
       "finish_reason":"stop"}]}
 
@@ -227,7 +229,7 @@ def devour_import_candidate(body: dict, request: Request):
     candidate=body.get("candidate")
     modality=str(body.get("modality","text")).lower()
     teacher_id=str(body.get("teacher_model_id","gemini-teacher"))
-    if not isinstance(candidate,dict): raise HTTPException(422,"candidate must be a T-Lang object")
+    if not isinstance(candidate,dict): raise HTTPException(422,"candidate must be a V-Lang object")
     if modality not in {"image","audio","video","music","code","multilingual","text"}: raise HTTPException(422,"unsupported modality")
     candidate["provenance"]={"kind":"teacher","teacher":"gemini-teacher","teacher_model_id":teacher_id,"modality":modality,"child_id":who}
     try:
@@ -333,9 +335,11 @@ def devour_stats():
     return {"catalogued_models":len(DEVOUR.list(limit=500)),"devour":DEVOUR.stats(),"teacher_configured":teacher_configured(),"stored_templates":len(STORE.all())}
 
 @app.get("/v1/tlang/spec")
-def tlang_spec():
-    return {"version":"tlang/1","storage":"one compact JSON object per line in a .tlang file",
-      "allowed_operations":["add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity"],
+@app.get("/v1/vlang/spec")
+def vlang_spec():
+    return {"version":"vlang/1","legacy_reader":"tlang/1","storage":"one compact JSON object per line in a .vlang file",
+      "allowed_operations":["add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity","classify_intent","call_tool"],
+      "call_tool_rule":"CALL TOOL is limited to the server-registered tool names and their typed input contracts. Tests use a contract stub; runtime success requires a real tool result with verified=true.",
       "rule":"Every record requires executable test vectors; Home reruns them before merge."}
 
 @app.get("/v1/tools")
@@ -362,10 +366,81 @@ def tool_execute(body: dict, request: Request):
 @app.get("/v1/artifacts/{artifact_id}")
 def tool_artifact(artifact_id: str, request: Request):
     actor(request)
-    if not re.fullmatch(r"[a-f0-9]{32}\\.(?:png|wav|mp4|json)",artifact_id):
+    if not re.fullmatch(r"[a-f0-9]{32}\.(?:png|wav|mp4|json)",artifact_id):
         raise HTTPException(404,"Artifact not found")
     path=(TOOL_ARTIFACT_ROOT/artifact_id).resolve()
     if TOOL_ARTIFACT_ROOT not in path.parents or not path.is_file():
         raise HTTPException(404,"Artifact not found")
     media= {"png":"image/png","wav":"audio/wav","mp4":"video/mp4","json":"application/json"}[path.suffix[1:]]
     return FileResponse(path,media_type=media,filename=artifact_id)
+
+
+# Shared Home cache: refresh periodically so every VORAX child sees merged methods.
+_HOME_SYNC_AT=0.0
+_HOME_SYNC_STATUS={"status":"not_checked","new_templates":0}
+
+def _refresh_home_catalog():
+    global _HOME_SYNC_AT,_HOME_SYNC_STATUS
+    if time.monotonic()-_HOME_SYNC_AT < 60:
+        return _HOME_SYNC_STATUS
+    try:
+        remote=sync_library(HOME_REPO,HOME_BRANCH)
+        added=0
+        for record in remote:
+            before=STORE.get(record["id"])
+            STORE.add(record)
+            if before is None: added+=1
+        _HOME_SYNC_STATUS={"status":"synced","new_templates":added,"home_templates":len(remote)}
+    except Exception as exc:
+        _HOME_SYNC_STATUS={"status":"cached","reason":type(exc).__name__,"home_templates":len(STORE.all())}
+    _HOME_SYNC_AT=time.monotonic()
+    return _HOME_SYNC_STATUS
+
+
+@app.post("/vorax/x")
+def vorax_input_x(body: dict, request: Request):
+    """Universal VORAX intake. Callers send X only; VORAX owns classification and routing."""
+    value=body.get("x")
+    if not isinstance(value,str) or not value.strip() or len(value)>12000:
+        raise HTTPException(422,"x must be non-empty text of at most 12000 characters")
+    try:
+        classification=classify_input_x(value,STORE.all())
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    home_status=_refresh_home_catalog()
+    # Any paid/external tool call must come through an authenticated child or admin.
+    if classification.get("tool"):
+        actor(request)
+    result=handle_input_x(value,STORE.all(),tool_executor=execute_registered_tool)
+    result["engine"]="VORAX"
+    result["home_sync"]=home_status
+
+    # Unknown X triggers bounded public-source discovery. A configured teacher may
+    # propose a V-Lang method; proposal failures never replace the current response.
+    if result.get("status")=="unknown" and not result.get("template_id"):
+        sources=discover_method_sources(str(classification["task_type"]),value)
+        result["discovery"]={"status":sources["status"],"source_count":len(sources["sources"]),
+                             "sources":sources["sources"],"method_evidence":sources.get("method_evidence",[]),
+                             "method_evidence_count":len(sources.get("method_evidence",[])),
+                             "source_errors":sources["source_errors"],"weights_downloaded":False}
+        auto_learn=os.getenv("VORAX_AUTO_LEARN","true").strip().lower() in {"1","true","yes"}
+        if auto_learn and teacher_configured():
+            try:
+                who=actor(request)
+                candidate=propose_template(
+                    task=f"{classification['task_type']}: {value[:400]}",
+                    inputs={"x":value},
+                    triggers=[value[:48] or str(classification["task_type"])],
+                    source_context=sources,
+                )
+                record=save_candidate(candidate,who)
+                child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
+                submitted=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
+                result["learning"]={"status":"submitted_for_home_verification",
+                                    "template_id":record["id"],"pull_request":submitted["pull_request"]}
+            except Exception as exc:
+                # Learning is opportunistic. Preserve the unknown result for caller fallback.
+                result["learning"]={"status":"unavailable","reason":type(exc).__name__}
+        else:
+            result["learning"]={"status":"teacher_not_configured" if not teacher_configured() else "disabled"}
+    return result

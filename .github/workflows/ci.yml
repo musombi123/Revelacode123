@@ -1,4 +1,4 @@
-name: Legend core CI
+name: VORAX core CI
 on:
   push:
     branches: ["**"]
@@ -24,4 +24,4 @@ jobs:
         run: python -m compileall -q legend_core legend_api.py scripts
 
       - name: Build portable child container
-        run: docker build --tag revelacode-legend:ci .
+        run: docker build --tag revelacode-vorax:ci .

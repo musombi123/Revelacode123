@@ -1,4 +1,4 @@
-name: Legend Home template gate
+name: VORAX Home V-Lang gate
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -26,7 +26,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: python scripts/verify_pr.py
-      - name: Auto-merge verified T-Lang proposal
+      - name: Auto-merge verified V-Lang proposal
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

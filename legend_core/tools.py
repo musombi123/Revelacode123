@@ -219,6 +219,8 @@ def _run_code(source: str, tests: Any) -> ToolResult:
     source = _string(source, "source", 4000)
     if not isinstance(tests, list) or len(tests) > 20:
         raise ToolError("tests must be an array with at most 20 cases")
+    if tests:
+        raise ToolError("code.execute currently accepts no inline test vectors; executable test-runner support is not yet implemented")
     try:
         tree = ast.parse(source, mode="eval")
     except SyntaxError as exc:
@@ -320,7 +322,9 @@ def execute_tool(name: str, inputs: dict[str, Any], *, provider: str | None = No
 def execute_tool_dict(name: str, inputs: dict[str, Any], *, provider: str | None = None) -> dict[str, Any]:
     try:
         result=execute_tool(name,inputs,provider=provider)
-        return {k:v for k,v in result.__dict__.items() if v is not None}
+        payload={k:v for k,v in result.__dict__.items() if v is not None}
+        payload["verified"] = result.status == "verified"
+        return payload
     except ToolError as exc:
         return {"status":"unknown","tool":name,"provider":provider or CONTRACTS.get(name,ToolContract(name,{}, {},1,"","unknown","")).provider,
                 "verified":False,"reason":str(exc)}

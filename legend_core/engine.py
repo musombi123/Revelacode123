@@ -1,7 +1,7 @@
 """Deterministic template selection and composition; unknown is first-class."""
 from __future__ import annotations
 import re
-from .tlang import execute, TemplateError
+from .vlang import execute, TemplateError
 
 def _normalise(value: str)->str:
     return re.sub(r"[^a-z0-9 ]+"," ",value.casefold()).strip()
@@ -26,7 +26,7 @@ def compose(catalog: list[dict],*,template_id: str|None=None,task: str|None=None
     if template is None and task: template,reason=find_template(task,catalog)
     if template is None:
         return {"status":reason or "unknown","answer":None,"proof":[],
-                "message":"No verified procedure matches this task. Do not infer an answer; add a teacher-backed, testable T-Lang procedure."}
+                "message":"No verified procedure matches this task. Do not infer an answer; add a teacher-backed, testable V-Lang method."}
     try: result,trace=execute(template,inputs or {})
     except TemplateError as exc:
         return {"status":"input_required","answer":None,"template_id":template["id"],"message":str(exc),"proof":[]}

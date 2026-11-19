@@ -1,7 +1,7 @@
 """GitHub Home sync and child-to-Home pull request submission."""
 from __future__ import annotations
 import base64,json,os,re,time,urllib.error,urllib.parse,urllib.request,uuid
-from .tlang import dump_record,parse_document
+from .vlang import dump_record,parse_document
 
 class GitHubHomeError(RuntimeError): pass
 
@@ -23,7 +23,7 @@ def sync_library(repo: str,branch: str="main")->list[dict]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repo): raise ValueError("Invalid Home repository")
     tree=_api("GET",f"/repos/{repo}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
     if tree.get("truncated"): raise GitHubHomeError("Home tree is truncated; refusing a partial sync")
-    paths=[x["path"] for x in tree.get("tree",[]) if x.get("type")=="blob" and x.get("path","").startswith("templates/library/") and x["path"].endswith(".tlang")]
+    paths=[x["path"] for x in tree.get("tree",[]) if x.get("type")=="blob" and x.get("path","").startswith("templates/library/") and x["path"].endswith((".vlang",".tlang"))]
     result=[]
     for path in paths:
         url=f"https://raw.githubusercontent.com/{repo}/{urllib.parse.quote(branch,safe='')}/{urllib.parse.quote(path,safe='/')}"
@@ -40,15 +40,15 @@ def submit_template(repo: str,branch: str,child_id: str,template: dict,token: st
     provenance.update({"kind":"teacher" if provenance.get("kind")=="teacher" else "manual","child_id":child_id})
     record["provenance"]=provenance; content=dump_record(record)
     slug=re.sub(r"[^a-z0-9_-]+","_",record["id"].lower()).strip("_")
-    path=f"templates/library/children/{child_id}_{slug}.tlang"
+    path=f"templates/library/children/{child_id}_{slug}.vlang"
     new_branch=f"child/{child_id}/{int(time.time())}-{uuid.uuid4().hex[:8]}"
     ref=_api("GET",f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(branch,safe='')}",token)
     _api("POST",f"/repos/{repo}/git/refs",token,{"ref":"refs/heads/"+new_branch,"sha":ref["object"]["sha"]})
     encoded=base64.b64encode(content.encode()).decode("ascii")
     _api("PUT",f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}",token,
-         {"message":f"legend: child {child_id} proposes {record['id']}","content":encoded,"branch":new_branch})
+         {"message":f"vorax: child {child_id} proposes {record['id']}","content":encoded,"branch":new_branch})
     pr=_api("POST",f"/repos/{repo}/pulls",token,
-       {"title":f"Legend template proposal: {record['id']}",
-        "body":f"Automated T-Lang proposal from child {child_id}. Home will verify schema, safety, duplicates, and executable tests.",
+       {"title":f"VORAX V-Lang proposal: {record['id']}",
+        "body":f"Automated V-Lang proposal from child {child_id}. Home will verify schema, safety, duplicates, and executable tests.",
         "head":new_branch,"base":branch})
     return {"pull_request":pr["html_url"],"number":pr["number"],"branch":new_branch,"template_id":record["id"],"file":path}
