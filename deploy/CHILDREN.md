@@ -32,3 +32,34 @@ Set VITE_LEGEND_API_BASE in the Netlify build environment to the deployed child 
 ## Persistence and scale
 
 Mount persistent storage at /app/data for SQLite. If the service uses ephemeral storage, its local cache is rebuilt from Home on restart; Home remains the persistent library. For multiple replicas, use a shared transactional database rather than a container-local SQLite file. Keep child APIs isolated from Home write credentials where possible; only the learning/submission worker needs Contents + Pull requests write access.
+
+## Hugging Face model-repository packaging (not a Space)
+
+The exportable model-shaped package is under `hf-model/`. To create the public model repo `musombi123/revelacode-legend`, upload the **contents** of that folder to the model repo root:
+
+- `README.md` (model card)
+- `config.json` (Legend architecture metadata)
+- `tokenizer.json` (T-Lang descriptive tokenizer metadata)
+- `legend_engine.py` (HTTP API client)
+
+This package deliberately has no neural weights and is not compatible with `transformers.pipeline()`. Hugging Face's standard model repo does not automatically host a custom API service from these metadata files. The callable inference endpoint is the separately deployed Legend child service; use the child API URL in the model card/API client. No Gradio or Streamlit Space is required.
+
+### curl without any frontend
+
+Plain text request to the child API:
+
+    curl -X POST "$LEGEND_API_URL/generate" \
+      -H "Content-Type: application/json" \
+      -d '{"inputs":"triangle area base 10 height 5"}'
+
+Expected output after the learned triangle-area template is synced:
+
+    {"answer":25,"template_used":"geometry.triangle_area","verified":true,...}
+
+Structured request:
+
+    curl -X POST "$LEGEND_API_URL/generate" \
+      -H "Content-Type: application/json" \
+      -d '{"inputs":{"task":"calculate triangle area from base and height","inputs":{"base":10,"height":5}}}'
+
+Unknown requests must return `verified: false` and no invented answer.
