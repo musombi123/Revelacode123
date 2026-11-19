@@ -1,10 +1,8 @@
 services:
   - type: web
-    name: revelacode-legend-child
-    runtime: python
+    name: revelacode-legend-child-a
+    runtime: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn legend_api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /v1/health
     envVars:
       - key: LEGEND_HOME_REPO
@@ -12,9 +10,9 @@ services:
       - key: LEGEND_HOME_BRANCH
         value: main
       - key: LEGEND_CHILD_ID
-        value: legend-child-01
+        value: legend-child-a
       - key: LEGEND_DB_PATH
-        value: data/legend.sqlite3
+        value: /app/data/legend.sqlite3
       - key: LEGEND_CHILD_API_KEY
         sync: false
       - key: LEGEND_ADMIN_API_KEY
@@ -27,3 +25,33 @@ services:
         sync: false
       - key: LEGEND_TEACHER_BASE_URL
         value: https://api.openai.com/v1
+      - key: LEGEND_CORS_ORIGINS
+        value: https://revelacode.co.ke
+  - type: web
+    name: revelacode-legend-child-b
+    runtime: docker
+    plan: free
+    healthCheckPath: /v1/health
+    envVars:
+      - key: LEGEND_HOME_REPO
+        value: musombi123/Revelacode123
+      - key: LEGEND_HOME_BRANCH
+        value: main
+      - key: LEGEND_CHILD_ID
+        value: legend-child-b
+      - key: LEGEND_DB_PATH
+        value: /app/data/legend.sqlite3
+      - key: LEGEND_CHILD_API_KEY
+        sync: false
+      - key: LEGEND_ADMIN_API_KEY
+        sync: false
+      - key: LEGEND_GITHUB_TOKEN
+        sync: false
+      - key: LEGEND_TEACHER_API_KEY
+        sync: false
+      - key: LEGEND_TEACHER_MODEL
+        sync: false
+      - key: LEGEND_TEACHER_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LEGEND_CORS_ORIGINS
+        value: https://revelacode.co.ke
