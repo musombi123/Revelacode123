@@ -49,7 +49,7 @@ class ToolLayerTests(unittest.TestCase):
             return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff)
         raw = (b"\x89PNG\r\n\x1a\n" +
                chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0)) +
-               chunk(b"IDAT", zlib.compress(b"\x00" + bytes(64 * 64 * 3))) + chunk(b"IEND", b""))
+               chunk(b"IDAT", zlib.compress(b"".join(bytes([0]) + bytes(64 * 3) for _ in range(64)))) + chunk(b"IEND", b""))
         with patch.dict(os.environ, {"HF_TOKEN": "test-token"}), patch.object(tools, "_hf", return_value=(raw, "image/png")):
             result = tools.execute_tool("image.generate", {"prompt": "test", "width": 64, "height": 64})
         self.assertEqual(result.status, "verified")
