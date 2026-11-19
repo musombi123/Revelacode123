@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import requests
+import urllib.parse, urllib.request
 
 MODALITY_RULES = {
     "image": ["image-generation", "text-to-image", "image", "diffusion"],
@@ -108,9 +108,11 @@ def discover_hf_models(modality: str | None = None, limit: int = 50, token: str 
         params = {"limit": min(total_limit, 100), "sort": "downloads", "direction": -1}
         if category in {"image", "audio", "video", "code", "text"}:
             params["pipeline_tag"] = category if category in {"image", "audio", "video"} else ("text-generation" if category=="text" else "text-generation")
-        response = requests.get("https://huggingface.co/api/models", params=params, headers=headers, timeout=25)
-        response.raise_for_status()
-        for model in response.json():
+        url = "https://huggingface.co/api/models?" + urllib.parse.urlencode(params)
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=25) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        for model in payload:
             model_id = model.get("id")
             if not model_id or model_id in seen: continue
             tags = [str(t).lower() for t in model.get("tags", [])]
