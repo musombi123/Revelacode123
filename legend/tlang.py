@@ -142,7 +142,7 @@ _REQUIRED_ARGS = {
     "text.trim": {"value"}, "text.lower": {"value"}, "text.upper": {"value"}, "text.word_count": {"value"},
     "text.contains": {"value", "needle"}, "text.slug": {"value"}, "text.split": {"value", "separator"},
     "text.join": {"values", "separator"}, "math.add": {"values"}, "math.subtract": {"left", "right"},
-    "math.multiply": {"values"}, "math.divide": {"left", "right}, "math.mean": {"values"}, "math.min": {"values"},
+    "math.multiply": {"values"}, "math.divide": {"left", "right"}, "math.mean": {"values"}, "math.min": {"values"},
     "math.max": {"values"}, "math.round": {"value"}, "math.clamp": {"value", "lower", "upper"},
     "math.modulo": {"left", "right"}, "math.sqrt": {"value"}, "list.unique": {"values"}, "list.sort_numbers": {"values"},
 }
