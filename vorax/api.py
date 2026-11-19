@@ -12,7 +12,8 @@ from vorax.store import TemplateStore
 from vorax.teacher import propose_template, teacher_configured
 from vorax.vlang import TemplateError, parse_document, validate_template, execute
 from vorax.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
-from vorax.vault import mirror_home_and_artifacts, VaultError\nfrom vorax.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
+from vorax.vault import mirror_home_and_artifacts, VaultError
+from vorax.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
 from vorax.input_x import classify_input_x, handle_input_x, discover_method_sources
 
 ROOT=Path(__file__).resolve().parents[1]
