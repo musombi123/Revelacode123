@@ -1,10 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import ProphecyDashboard from './components/ProphecyDashboard';
+import LegendWorkbench from './components/LegendWorkbench';
+import './components/LegendWorkbench.css';
 
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 root.render(
   <React.StrictMode>
-    <ProphecyDashboard />
+    <LegendWorkbench />
   </React.StrictMode>
 );
