@@ -164,7 +164,8 @@ def _verify_png(path: Path) -> dict[str, Any]:
         if kind==b"IEND": seen_end=True; break
         offset=end
     if not chunks or not seen_end: raise ToolError("PNG image data or IEND chunk is missing")
-    decoded=zlib.decompress(b"".join(chunks))
+    try: decoded=zlib.decompress(b"".join(chunks))
+    except zlib.error as exc: raise ToolError("PNG pixel stream cannot be decoded") from exc
     bit_depth=raw[24]; color_type=raw[25]
     channels={0:1,2:3,3:1,4:2,6:4}.get(color_type)
     if bit_depth not in {8,16} or channels is None: raise ToolError("PNG color format is unsupported by the verifier")
@@ -177,11 +178,14 @@ def _verify_wav(path: Path) -> tuple[dict[str, Any], float]:
         with wave.open(str(path), "rb") as wav:
             frames, rate, channels, width = wav.getnframes(), wav.getframerate(), wav.getnchannels(), wav.getsampwidth()
             duration = frames / float(rate) if rate else 0
-            if frames <= 0 or rate <= 0 or channels <= 0 or width <= 0 or duration <= 0:
-                raise ToolError("WAV has no playable audio frames")
+            if wav.getcomptype() != "NONE" or frames <= 0 or rate <= 0 or channels <= 0 or width <= 0 or duration <= 0:
+                raise ToolError("WAV has no supported playable PCM audio frames")
             if duration > 600:
                 raise ToolError("WAV duration exceeds 10-minute limit")
-            return {"valid":True,"format":"wav","frames":frames,"sample_rate":rate,"channels":channels}, duration
+            pcm=wav.readframes(frames)
+            silent = (all(sample == 128 for sample in pcm) if width == 1 else not any(pcm))
+            if silent: raise ToolError("WAV contains silence only")
+            return {"valid":True,"format":"wav","frames":frames,"sample_rate":rate,"channels":channels,"non_silent":True}, duration
     except (wave.Error, EOFError) as exc:
         raise ToolError("Provider output is not a readable WAV") from exc
 
