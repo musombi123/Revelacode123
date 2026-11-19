@@ -1,6 +1,6 @@
 """RevelaCode Legend API: deterministic composition plus optional teacher adapters."""
 from __future__ import annotations
-import hmac, os
+import hmac, os, re, time, uuid
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -125,6 +125,69 @@ def submit(body: SubmitRequest,request: Request):
     try: result=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
     except (GitHubHomeError,ValueError) as exc: raise HTTPException(502,str(exc)) from exc
     return {"status":"submitted_for_home_verification",**result}
+
+
+def _answer_text(text: str) -> dict:
+    """Small, deterministic text bridge. It parses only explicit, supported numeric forms."""
+    try:
+        structured=__import__("json").loads(text)
+        if isinstance(structured,dict) and "task" in structured:
+            return compose(STORE.all(),task=str(structured["task"]),inputs=structured.get("inputs",{}))
+    except (ValueError,TypeError):
+        pass
+    patterns=[
+        (r"(-?\d+(?:\.\d+)?)\s*(?:\+|plus|add(?:ed)?(?:\s+to)?)\s*(-?\d+(?:\.\d+)?)","math.add",("a","b")),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:-|minus)\s*(-?\d+(?:\.\d+)?)","math.subtract",("a","b")),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:\*|x|times|multiplied by)\s*(-?\d+(?:\.\d+)?)","math.multiply",("a","b")),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:/|divided by)\s*(-?\d+(?:\.\d+)?)","math.divide",("a","b")),
+    ]
+    folded=text.casefold()
+    for pattern,template_id,names in patterns:
+        match=re.search(pattern,folded)
+        if match:
+            a,b=(float(value) for value in match.groups())
+            a=int(a) if a.is_integer() else a; b=int(b) if b.is_integer() else b
+            return compose(STORE.all(),template_id=template_id,inputs={names[0]:a,names[1]:b})
+    percent=re.search(r"(-?\d+(?:\.\d+)?)\s*%\s*(?:of)\s*(-?\d+(?:\.\d+)?)",folded)
+    if percent:
+        p,v=(float(value) for value in percent.groups())
+        return compose(STORE.all(),template_id="math.percentage_of",inputs={"percent":p,"value":v})
+    return compose(STORE.all(),task=text,inputs={})
+
+@app.get("/v1/models")
+def model_catalog():
+    return {"object":"list","data":[{"id":"legend-tlang-1","object":"model","owned_by":"revelacode",
+      "capabilities":["verified-template-composition"],"weights":False}]}
+
+@app.post("/v1/chat/completions")
+def openai_compatible_chat(body: dict):
+    """OpenAI-style chat endpoint for bounded template execution, not a language model."""
+    messages=body.get("messages") or []
+    user_message=next((item for item in reversed(messages) if item.get("role")=="user"),None)
+    if not user_message: raise HTTPException(422,"At least one user message is required")
+    text_value=user_message.get("content","")
+    if not isinstance(text_value,str): raise HTTPException(422,"User message content must be text")
+    answer=_answer_text(text_value)
+    return {"id":"legend-"+uuid.uuid4().hex,"object":"chat.completion","created":int(time.time()),
+      "model":"legend-tlang-1","choices":[{"index":0,
+      "message":{"role":"assistant","content":__import__("json").dumps(answer,ensure_ascii=False)},
+      "finish_reason":"stop"}]}
+
+@app.post("/models/{model_id:path}")
+def huggingface_style_inference(model_id: str,body: dict):
+    """Hugging Face-style inference route for structured T-Lang tasks."""
+    incoming=body.get("inputs")
+    if isinstance(incoming,dict):
+        task=incoming.get("task")
+        values=incoming.get("inputs",{})
+        if not isinstance(task,str) or not isinstance(values,dict):
+            raise HTTPException(422,"inputs must contain task and an inputs object")
+        answer=compose(STORE.all(),task=task,inputs=values)
+    elif isinstance(incoming,str):
+        answer=_answer_text(incoming)
+    else:
+        raise HTTPException(422,"inputs must be a task string or {task, inputs} object")
+    return {"model":model_id,"result":answer}
 
 @app.get("/v1/tlang/spec")
 def tlang_spec():
