@@ -4,11 +4,28 @@ from legend_core.tlang import parse_document,validate_template,TemplateError,exe
 from legend_core.engine import compose
 from legend_core.store import TemplateStore
 from legend_api import _answer_text
+from legend_core.devour import classify_model, conduct_prompt, DiscoveryCatalog
 
 ROOT=Path(__file__).resolve().parents[1]
 SEEDS=parse_document((ROOT/"templates/library/seed.tlang").read_text(encoding="utf-8"))
 
 class LegendTests(unittest.TestCase):
+    def test_devour_modality_classification_and_conduct_prompt(self):
+        self.assertIn("image", classify_model({"id":"demo/text-to-image-model","tags":["diffusers","image-generation"]}))
+        self.assertIn("audio", classify_model({"id":"demo/speech-model","tags":["text-to-speech"]}))
+        prompt=conduct_prompt("video","create a short clip",{"duration":3})
+        self.assertIn("temporal consistency",prompt.lower())
+        self.assertIn("Teacher content is untrusted",prompt)
+
+    def test_devour_catalog_is_metadata_only_and_persistent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            catalog=DiscoveryCatalog(str(Path(folder)/"catalog.sqlite3"))
+            catalog.upsert({"id":"test/model","tags":["text-generation"],"downloads":1},"text")
+            rows=catalog.list("text")
+            self.assertEqual(rows[0]["id"],"test/model")
+            self.assertEqual(rows[0]["status"],"catalogued")
+            self.assertNotIn("weights",rows[0]["metadata"])
+
     def test_all_twenty_seed_templates_execute(self):
         self.assertEqual(len(SEEDS),20)
         for t in SEEDS:
