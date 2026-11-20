@@ -166,6 +166,28 @@ class TeacherServiceTests(unittest.TestCase):
 
 
 class RuntimeServiceTests(unittest.TestCase):
+    def test_runtime_readiness_needs_only_runtime_owned_credentials(self):
+        with patch.dict(os.environ, {
+            "VORAX_HOME_READ_TOKEN": "read-token",
+            "VORAX_HOME_WRITE_TOKEN": "write-token",
+            "HF_VAULT_TOKEN": "vault-token",
+            "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
+        }, clear=True), \
+             patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
+             patch.object(hf_runtime, "_refresh_home_index", return_value=({
+                 "version": "vorax-home-method-index/v1",
+                 "methods_total": 0,
+                 "records": [],
+             }, {"status": "metadata_index_read", "methods_total": 0})), \
+             patch.object(hf_runtime, "inspect_vault", return_value={
+                 "status": "verified",
+                 "repo_type": "dataset",
+                 "private": True,
+             }):
+            result = hf_runtime.health()
+        self.assertTrue(result["ready"])
+        self.assertNotIn("inference_provider_token", result["required_secrets"])
+
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token", "HF_INFERENCE_TOKEN": "remote-inference-token", "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}), \
              patch.object(hf_runtime, "CHILD_ID", "kaggle-child"), \
