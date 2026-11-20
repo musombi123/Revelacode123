@@ -10,7 +10,7 @@ VORAX is a learning engine, not a model. It has one Input X, one V-Lang, and one
 
 | Resource | Hugging Face type | Responsibility | Write authority |
 |---|---|---|---|
-| **Musombi/vorax-teacher-service** | Docker Space | Model metadata discovery and remote Inference Providers responses | No Vault write access |
+| **Musombi/vorax-teacher-service** | Docker Space | Metadata-only discovery of Hub models, Spaces and Datasets; remote Inference Providers responses | No Vault write access |
 | **Musombi/vorax-runtime-service** | Docker Space | Shared VORAX runtime, trusted V-Lang test execution, child authentication, Home PR submission | The only service permitted to write verified candidates to Vault pending |
 | **Musombi/revelacode-vorax-vault** | Existing private Dataset | V-Lang indexes, pending methods, Home-merged methods, checksums, reports and verified artifacts | Runtime only; Home remains the source of truth |
 
@@ -31,7 +31,7 @@ Routes:
 | Route | Behavior |
 |---|---|
 | **GET /health** | 200 with service=teacher, configuration booleans, weights_downloaded=false, local_model_loaded=false, kaggle_t4_used=false |
-| **GET /teacher/discover?query=X&limit=N** | Hub metadata only: model id, tags, downloads, likes |
+| **GET /teacher/discover?query=X&limit=N&source=all** | Metadata for Hub models, Spaces and Datasets: id, tags, description, downloads, likes, pipeline/library/SDK metadata |
 | **POST /teacher/ask** | Authenticated remote chat completion through Hugging Face Inference Providers |
 
 Example request fields: prompt and model_id, for example owner/model:provider. The ask route requires x-child-id and x-child-key. The response and service log include model ID, provider (or unknown if the provider header is absent), remote inference status, and kaggle_t4_used=false. There is no local model runtime or weight cache. The inference call is explicit; deployment health checks do not consume inference quota.
@@ -50,14 +50,15 @@ Repository: **Musombi/vorax-runtime-service**
 
 Deployment context: **deploy/hf-runtime/**
 
-This Space packages the repository's existing **vorax/** modules and **templates/library/**. It does not create a second interpreter or fork the V-Lang contract.
+This Space packages the repository's existing **vorax/** modules and trusted V-Lang interpreter. It does not package Home's **templates/library/** method bodies. Children receive only the metadata-only **templates/library/index.json** summaries and learn new implementations from the world.
 
 Routes:
 
 | Route | Behavior |
 |---|---|
-| **GET /health** | 200 with service=runtime, Home sync, private Dataset proof, secret readiness and ready |
-| **POST /vorax/x** | Runs one Input X through the shared Home-synced V-Lang catalogue |
+| **GET /health** | 200 with service=runtime, Home metadata-index state, private Dataset proof, secret readiness and ready |
+| **GET /vorax/home-index** | Authenticated metadata-only Home index; method bodies are not included |
+| **POST /vorax/x** | Answers only locally built-in runtime protocol X; otherwise returns unknown until a Child brings a verified method from the world |
 | **POST /vorax/verify** | Revalidates a supplied V-Lang method with the trusted interpreter, stores a passing method under Vault pending, then opens a Home PR |
 | **POST /vorax/learn** | Calls Teacher remotely, parses its proposed method, and passes it through the same Runtime verification and Home PR path |
 
@@ -71,7 +72,7 @@ Candidate trust flow:
 3. Runtime reruns schema validation and every declared test using the repository's trusted interpreter.
 4. Runtime writes only to **vlang/pending/** and updates **vlang/pending/index.json**, verification report and SHA-256 manifest.
 5. Runtime opens a GitHub Home PR. The pending method is deliberately **not** inserted into the executable Runtime catalogue.
-6. Only a subsequent Home sync after Home merge can make the method executable and eligible for **vlang/verified/** mirroring.
+6. After Home merges the PR, Runtime may promote the method bytes already in Vault pending to **vlang/verified/** when the refreshed Home metadata index includes its ID. It never pulls the method implementation from Home.
 
 Runtime Space secrets:
 - **VORAX_CHILD_ID=kaggle-child**.
