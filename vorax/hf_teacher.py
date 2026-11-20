@@ -185,7 +185,8 @@ def discover(
         "resources": resources,
         "models_found": len(models),
         "resources_found": len(resources),
-        "next_cursor": cursors.get("models"),
+        "next_cursor": cursors.get(source) if source != "all" else cursors.get("models"),
+        "next_cursors": cursors,
         "weights_downloaded": False,
         "local_model_loaded": False,
     }
