@@ -130,13 +130,16 @@ def read_home_metadata_index(read_token: str) -> dict:
     for item in index["records"]:
         if (
             not isinstance(item, dict)
-            or set(item) != {"id", "domain", "task", "triggers"}
+            or set(item) != {"id", "domain", "task", "triggers", "method_sha256"}
             or not isinstance(item.get("id"), str)
             or not isinstance(item.get("domain"), str)
             or not isinstance(item.get("task"), str)
             or not isinstance(item.get("triggers"), list)
+            or any(not isinstance(value, str) for value in item.get("triggers", []))
+            or not isinstance(item.get("method_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", item.get("method_sha256", ""))
         ):
-            raise ConnectorError("Home index contains an invalid metadata entry")
+            raise ConnectorError("Home index contains an invalid metadata/checksum entry")
     return index
 
 
