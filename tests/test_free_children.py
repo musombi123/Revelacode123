@@ -1,12 +1,13 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
 from starlette.requests import Request
 
 import vorax.api
-from vorax import github_home
+from vorax import github_home, vault
 
 
 def request_scope():
@@ -24,107 +25,105 @@ def request_scope():
     })
 
 
-class FreeChildRoutingTests(unittest.TestCase):
-    def test_koyeb_routes_heavy_x_to_kaggle_queue_without_running_provider(self):
-        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "koyeb"}), \
-             patch.object(vorax.api, "classify_input_x",
-                          return_value={"task_type": "image", "template_id": "image.generate",
-                                        "tool": "image.generate", "classifier_template": "input.classifier"}), \
-             patch.object(vorax.api, "actor", return_value="koyeb-child"), \
-             patch.object(vorax.api, "enqueue_kaggle_x",
-                          return_value={"status": "queued", "number": 77, "verification": "not_executed"}), \
-             patch.object(vorax.api, "handle_input_x") as execute, \
-             patch.object(vorax.api, "_refresh_home_catalog") as refresh:
-            result = vorax.api.vorax_input_x({"x": "generate an image of a lighthouse"}, request_scope())
+class AwayChildPolicyTests(unittest.TestCase):
+    def test_runtime_tool_executor_never_selects_a_local_kaggle_gpu(self):
+        expected = {"status": "unknown", "verified": False}
+        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "kaggle-learning"}), \
+             patch.object(vorax.api, "execute_registered_tool", return_value=expected) as execute:
+            result = vorax.api.runtime_tool_executor("image.generate", {"prompt": "cat"})
+        self.assertEqual(result, expected)
+        execute.assert_called_once_with("image.generate", {"prompt": "cat"})
 
-        self.assertEqual(result["status"], "queued")
-        self.assertEqual(result["destination_child"], "kaggle-child")
-        self.assertEqual(result["verification"], "not_executed")
-        execute.assert_not_called()
-        refresh.assert_not_called()
-
-    def test_koyeb_keeps_light_text_on_the_shared_runtime(self):
-        verified = {"status": "verified", "answer": "I am VORAX", "template_id": "greeting.identity"}
-        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "koyeb"}), \
-             patch.object(vorax.api, "classify_input_x",
-                          return_value={"task_type": "greeting", "template_id": "greeting.identity",
-                                        "tool": None, "classifier_template": "input.classifier"}), \
-             patch.object(vorax.api, "_refresh_home_catalog", return_value={"status": "synced"}), \
-             patch.object(vorax.api, "handle_input_x", return_value=verified):
+    def test_shared_api_does_not_read_home_method_bodies(self):
+        with patch.object(vorax.api, "_home_metadata_index", return_value={
+            "version": "vorax-home-method-index/v1",
+            "methods_total": 30,
+            "records": [],
+        }):
             result = vorax.api.vorax_input_x({"x": "hello, who are you"}, request_scope())
-
         self.assertEqual(result["status"], "verified")
-        self.assertEqual(result["engine"], "VORAX")
-        self.assertEqual(result["home_sync"]["status"], "synced")
+        self.assertEqual(result["method"], "runtime.identity")
+        self.assertNotIn("templates", result)
+        self.assertIs(result["verification"]["home_method_bodies_loaded"], False)
 
-    def test_koyeb_heavy_route_requires_child_authentication(self):
-        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "koyeb"}), \
-             patch.object(vorax.api, "classify_input_x",
-                          return_value={"task_type": "video", "template_id": "video.generate",
-                                        "tool": "video.generate", "classifier_template": "input.classifier"}), \
-             patch.object(vorax.api, "actor", side_effect=HTTPException(403, "missing child key")), \
-             patch.object(vorax.api, "enqueue_kaggle_x") as queue:
-            with self.assertRaises(HTTPException) as error:
-                vorax.api.vorax_input_x({"x": "make a video"}, request_scope())
+    def test_shared_api_unknown_x_is_not_auto_queued_or_self_learned(self):
+        with patch.object(vorax.api, "_home_metadata_index", return_value=None):
+            result = vorax.api.vorax_input_x({"x": "build a complex irrigation controller"}, request_scope())
+        self.assertEqual(result["status"], "unknown")
+        self.assertIsNone(result["artifact_sha256"])
+        self.assertNotIn("queue", result)
+        self.assertNotIn("learning", result)
 
-        self.assertEqual(error.exception.status_code, 403)
-        queue.assert_not_called()
-
-    def test_queue_helper_records_x_as_not_executed(self):
+    def test_metadata_fetch_reads_only_the_home_index_endpoint(self):
+        metadata = {
+            "encoding": "base64",
+            "content": "eyJ2ZXJzaW9uIjogInZvc mF4LWhvbWUtbWV0aG9kLWluZGV4L3YxIn0=",
+        }
         with patch.object(github_home, "_api", return_value={
-            "number": 77, "html_url": "https://github.com/musombi123/Revelacode123/issues/77"
-        }) as api:
-            result = github_home.enqueue_kaggle_x(
-                "musombi123/Revelacode123", "generate a small image", "test-write-token"
-            )
+            "encoding": "base64",
+            "content": __import__("base64").b64encode(
+                __import__("json").dumps({
+                    "version": "vorax-home-method-index/v1",
+                    "methods_total": 0,
+                    "records": [],
+                }).encode()
+            ).decode(),
+        }) as call:
+            index = github_home.fetch_method_index("musombi123/Revelacode123", "main", "read-token")
+        self.assertEqual(index["methods_total"], 0)
+        self.assertIn("/contents/templates/library/index.json", call.call_args.args[1])
+        self.assertNotIn(".vlang", call.call_args.args[1])
+        self.assertNotIn(".tlang", call.call_args.args[1])
 
-        self.assertEqual(result["status"], "queued")
-        self.assertEqual(result["verification"], "not_executed")
-        body = api.call_args.args[3]
-        self.assertIn("VORAX_X_QUEUE_V1", body["body"])
-        self.assertIn('"status": "queued"', body["body"])
-
-    def test_queue_helper_rejects_credential_like_input(self):
-        with patch.object(github_home, "_api") as api:
-            with self.assertRaises(ValueError):
-                github_home.enqueue_kaggle_x(
-                    "musombi123/Revelacode123", "use api_key=do-not-store", "test-write-token"
-                )
-        api.assert_not_called()
-
-    def test_vault_default_is_case_sensitive_musombi_dataset(self):
-        from vorax import vault
-
-        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "test-token"}, clear=True), \
-             patch("huggingface_hub.HfApi") as api_class:
-            api = api_class.return_value
-            api.repo_info.return_value.private = True
-            _, repo = vault._client()
-
+    def test_vault_client_opens_existing_private_dataset_without_creating_or_converting(self):
+        fake_api = SimpleNamespace(
+            repo_info=lambda **kwargs: SimpleNamespace(private=True),
+            list_repo_files=lambda **kwargs: [
+                "vlang/index.json",
+                "vlang/pending/index.json",
+                "manifest/checksums.json",
+            ],
+        )
+        with patch.dict(os.environ, {
+            "HF_VAULT_TOKEN": "dataset-token",
+            "HF_VAULT_REPO": "Musombi/revelacode-vorax-vault",
+        }), patch("huggingface_hub.HfApi", return_value=fake_api) as api_class:
+            api, repo = vault._client()
+        self.assertIs(api, fake_api)
         self.assertEqual(repo, "Musombi/revelacode-vorax-vault")
-        api.create_repo.assert_called_once_with(
-            repo_id="Musombi/revelacode-vorax-vault",
-            repo_type="dataset",
-            private=True,
-            exist_ok=True,
-        )
-        api.repo_info.assert_called_once_with(
-            repo_id="Musombi/revelacode-vorax-vault",
-            repo_type="dataset",
-        )
+        api_class.assert_called_once()
+        self.assertFalse(hasattr(fake_api, "create_repo"))
 
-    def test_vault_refuses_existing_public_dataset(self):
-        from vorax import vault
-
-        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "test-token"}, clear=True), \
-             patch("huggingface_hub.HfApi") as api_class:
-            api = api_class.return_value
-            api.repo_info.return_value.private = False
+    def test_vault_refuses_public_dataset(self):
+        fake_api = SimpleNamespace(
+            repo_info=lambda **kwargs: SimpleNamespace(private=False),
+            list_repo_files=lambda **kwargs: [],
+        )
+        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "dataset-token"}, clear=True), \
+             patch("huggingface_hub.HfApi", return_value=fake_api):
             with self.assertRaisesRegex(vault.VaultError, "is public"):
                 vault._client()
 
-        api.create_repo.assert_called_once()
-        api.repo_info.assert_called_once()
+    def test_kaggle_worker_source_has_no_local_gpu_or_queue_execution(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] / "kaggle" / "child" / "vorax_child.py").read_text(
+            encoding="utf-8"
+        ).casefold()
+        for forbidden in (
+            "diffusers",
+            "requirements-gpu.txt",
+            "nvidia-smi",
+            "queue_issues(",
+            "vault_sync",
+            "pip install",
+            "git clone",
+            "hf_model_token",
+            "hf_inference_token",
+            "snapshot_download",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
+
 
 if __name__ == "__main__":
     unittest.main()
