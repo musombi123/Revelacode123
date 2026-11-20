@@ -46,10 +46,10 @@ def _assert_no_model_payloads(api, repo: str) -> list[str]:
         files = list(api.list_repo_files(repo_id=repo, repo_type="dataset"))
     except Exception as exc:
         raise VaultError("Could not inspect the existing Vault file list") from exc
-    weight_suffixes = (".safetensors", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".model")
+    weight_suffixes = (".safetensors", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".model", ".bin", ".h5", ".pb", ".tflite", ".msgpack", ".weights")
     for name in files:
         lowered = name.lower()
-        if lowered.startswith("hf-model/") or lowered.endswith(weight_suffixes):
+        if "hf-model/" in lowered or lowered == "hf-model" or lowered.endswith(weight_suffixes) or lowered.endswith("/pytorch_model.bin"):
             raise VaultError(f"Forbidden model payload found in Vault: {name}")
         if lowered.endswith("/config.json") or lowered == "config.json":
             try:
