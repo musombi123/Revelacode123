@@ -88,7 +88,8 @@ Optional Kaggle Notebook secrets:
 - `HF_VAULT_TOKEN`
 - `HF_INFERENCE_TOKEN` — optional remote-provider access; it does not prove Kaggle GPU use.
 - `HF_MODEL_TOKEN` — optional Hugging Face Hub read token for downloading the local Diffusers image model if the selected model requires authentication.
-- `VORAX_KAGGLE_IMAGE_MODEL` — optional runtime environment override; defaults to `stable-diffusion-v1-5/stable-diffusion-v1-5`.
+- `VORAX_KAGGLE_IMAGE_MODEL` — optional model repository ID override (default: `stable-diffusion-v1-5/stable-diffusion-v1-5`).
+- `VORAX_KAGGLE_IMAGE_STEPS` — optional inference-step override (12–40, default: 24).
 - `LEGEND_TEACHER_API_KEY`
 - `LEGEND_TEACHER_MODEL`
 - `LEGEND_TEACHER_BASE_URL`
