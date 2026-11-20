@@ -36,7 +36,7 @@ Routes:
 | **GET /teacher/discover?query=X&limit=N&source=all** | Metadata for Hub models, Spaces and Datasets plus the Hugging Face Inference Providers router catalogue: IDs, tags, descriptions, downloads, likes, pipeline/library/SDK data and live provider mappings |
 | **POST /teacher/ask** | Authenticated remote chat completion through Hugging Face Inference Providers |
 
-Example request fields: prompt and model_id, for example owner/model:provider. The ask route requires x-child-id and x-child-key. Kaggle can consult several discovered models in one learning pass. Each response and service log includes model ID, provider (or unknown if the provider header is absent), remote inference status, and kaggle_t4_used=false. There is no local model runtime or weight cache. The inference call is explicit; deployment health checks do not consume inference quota.
+Example request fields: prompt and model_id, for example owner/model:provider. The ask route requires x-child-id and x-child-key. Kaggle can consult several discovered models in one learning pass. Each response and service log includes model ID and the provider confirmed by the Inference Provider response header; if the provider header is absent or differs from the pinned provider, Teacher rejects the response. Signed provenance records remote inference, kaggle_t4_used=false and weights_downloaded=false. There is no local model runtime or weight cache. The inference call is explicit; deployment health checks do not consume inference quota.
 
 Teacher Space secrets:
 - **HF_TOKEN** — Hugging Face token with Inference Providers permission.
@@ -84,6 +84,7 @@ Runtime Space secrets:
 - **VORAX_HOME_REPO=musombi123/Revelacode123**, **VORAX_HOME_BRANCH=main**.
 - **VORAX_HOME_READ_TOKEN** and **VORAX_HOME_WRITE_TOKEN**.
 - **HF_VAULT_TOKEN** with read/write access to the existing private Dataset.
+- **HF_INFERENCE_TOKEN** — remote provider access used by the Runtime's registered tool adapters; the deploy workflow currently maps this to the supplied `HF_TOKEN`.
 - **HF_VAULT_REPO=Musombi/revelacode-vorax-vault**.
 - **VORAX_TEACHER_URL=https://musombi-vorax-teacher-service.hf.space**.
 - **VORAX_TEACHER_MODEL** — optional default used by /vorax/learn.
@@ -125,11 +126,11 @@ Local deployment commands:
 
 The script requires **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, and **HF_VAULT_TOKEN** in the local process environment. **HF_READ_TOKEN** and **VORAX_TEACHER_MODEL** are optional. Never paste these values into chat or commit them.
 
-Optional, deliberately explicit smoke action: **--smoke-remote-inference --teacher-model owner/model:provider** makes one actual remote inference request and may consume provider quota/credits. Deployment does not fabricate or seed a V-Lang method.
+Optional, deliberately explicit smoke action: **--smoke-remote-inference --teacher-model owner/model:provider** makes one real remote inference request. It can incur charges. Current Hugging Face pricing documentation lists no monthly Inference Providers credits for Free accounts; do not run Teacher learning or the inference smoke unless an existing grant/credit balance or an already-configured provider arrangement covers it. Deployment does not fabricate or seed a V-Lang method.
 
 The equivalent release-gated GitHub Actions workflow is **.github/workflows/deploy-hf-two-children.yml**. It runs only from a published tag that passes **scripts/require_green_release.py**. Required GitHub Secrets are **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, **HF_VAULT_TOKEN**, and **VORAX_TEACHER_ATTESTATION_KEY**; optional **HF_READ_TOKEN** and repository variable **VORAX_TEACHER_MODEL** may also be set.
 
-**Hosting constraint:** Hugging Face documents Docker Spaces as compute Spaces. Personal-account CPU Basic for Docker/Gradio currently requires PRO eligibility; free Static Spaces cannot host this FastAPI Docker service. The script does not upgrade a plan, add billing, or select paid hardware. If Space creation is rejected by account eligibility, deployment stops and reports the service as not live.
+**Hosting constraint:** Hugging Face currently requires PRO for personal-account Docker/Gradio Spaces (or a Team/Enterprise account). CPU Basic has no hourly compute charge after the Space is eligible, but the account-level creation requirement still applies. Free Static Spaces cannot host this FastAPI Docker service. The script does not upgrade a plan, add billing, or select paid hardware. If Space creation is rejected by account eligibility, deployment stops and reports the service as not live.
 
 ## GO / NO-GO
 
