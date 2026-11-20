@@ -30,6 +30,11 @@ def _client():
         raise VaultError("Invalid Vault repository ID")
     api = HfApi(token=token)
     api.create_repo(repo_id=repo, repo_type="dataset", private=True, exist_ok=True)
+    info = api.repo_info(repo_id=repo, repo_type="dataset")
+    if not getattr(info, "private", False):
+        raise VaultError(
+            f"Vault dataset {repo} is public; refusing to upload Home methods or artifacts"
+        )
     return api, repo
 
 
