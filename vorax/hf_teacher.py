@@ -21,6 +21,7 @@ LOGGER = logging.getLogger("vorax.teacher-service")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 HF_MODELS_API = "https://huggingface.co/api/models"
 HF_CHAT_API = "https://router.huggingface.co/v1/chat/completions"
+HF_ROUTER_MODELS_API = "https://router.huggingface.co/v1/models"
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$")
 MAX_PROMPT_CHARS = 12_000
 
@@ -113,6 +114,18 @@ def _metadata_item(item: dict, source_type: str) -> dict | None:
         or item.get("description")
         or ""
     )
+    mapping = item.get("inferenceProviderMapping")
+    providers = []
+    if isinstance(mapping, dict):
+        for provider, details in sorted(mapping.items()):
+            if not isinstance(details, dict):
+                continue
+            providers.append({
+                "provider": str(provider),
+                "status": str(details.get("status") or ""),
+                "provider_model_id": str(details.get("providerId") or ""),
+                "task": str(details.get("task") or ""),
+            })
     return {
         "id": item_id,
         "source_type": source_type,
@@ -123,17 +136,31 @@ def _metadata_item(item: dict, source_type: str) -> dict | None:
         "pipeline_tag": item.get("pipeline_tag"),
         "library_name": item.get("library_name"),
         "sdk": item.get("sdk"),
+        "providers": providers,
     }
-
-
 def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None):
     if kind not in {"models", "spaces", "datasets"}:
         raise HTTPException(422, "source must be models, spaces, datasets, or all")
-    params = {"limit": str(limit), "sort": "downloads", "direction": "-1"}
+    params = [
+        ("limit", str(limit)),
+        ("sort", "downloads"),
+        ("direction", "-1"),
+    ]
     if query.strip():
-        params["search"] = query.strip()
+        params.append(("search", query.strip()))
     if cursor:
-        params["cursor"] = cursor
+        params.append(("cursor", cursor))
+    if kind == "models":
+        params.append(("inference_provider", "all"))
+        params.extend([
+            ("expand[]", "tags"),
+            ("expand[]", "downloads"),
+            ("expand[]", "likes"),
+            ("expand[]", "pipeline_tag"),
+            ("expand[]", "library_name"),
+            ("expand[]", "cardData"),
+            ("expand[]", "inferenceProviderMapping"),
+        ])
     url = f"https://huggingface.co/api/{kind}?" + urllib.parse.urlencode(params)
     payload, headers = _http_json(
         url,
