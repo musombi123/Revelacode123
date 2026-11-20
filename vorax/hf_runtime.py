@@ -205,7 +205,7 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
         canonical = dump_record(record).encode("utf-8")
         method_sha = hashlib.sha256(canonical).hexdigest()
         # Pending candidates are deliberately not added to the executable catalog.
-        # Only a later Home sync may make a merged method available to /vorax/x.
+        # Runtime never executes pending proposals; Home approval remains a separate gate.
     except (TemplateError, ValueError) as exc:
         STORE.record_failure(child_id)
         _log(
@@ -451,3 +451,29 @@ def learn_method(
         teacher.get("model_id", model_id),
         body.task,
     )
+
+@app.post("/vorax/vault/reconcile")
+def reconcile_vault(
+    body: dict | None = None,
+    x_child_id: str | None = Header(default=None, alias="x-child-id"),
+    x_child_key: str | None = Header(default=None, alias="x-child-key"),
+):
+    payload = body or {}
+    child_id = _require_child(payload.get("child_id") or x_child_id, payload.get("api_key") or x_child_key)
+    index, _ = _refresh_home_index(force=True)
+    if index is None:
+        raise HTTPException(503, "Home metadata-only index is unavailable")
+    try:
+        result = promote_pending_home_methods(index)
+    except VaultError as exc:
+        raise HTTPException(503, "Vault reconciliation failed: " + str(exc)) from exc
+    _log(
+        "vault_reconcile",
+        child_id=child_id,
+        x="Home metadata index reconciliation",
+        method="multiple" if result["promoted_method_ids"] else None,
+        verification=result["status"],
+        promoted_methods=result["promoted_method_ids"],
+    )
+    return result
+
