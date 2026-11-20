@@ -18,21 +18,21 @@ class KaggleLearningConnectorTests(unittest.TestCase):
             {
                 "id": "acme/alpha",
                 "providers": [
-                    {"provider": "provider-a", "status": "live", "task": "conversational", "throughput": 25},
-                    {"provider": "provider-b", "status": "live", "task": "conversational", "throughput": 12},
+                    {"provider": "provider-a", "status": "live", "task": "conversational", "throughput": 25, "is_free": True},
+                    {"provider": "provider-b", "status": "live", "task": "conversational", "throughput": 12, "is_free": True},
                     {"provider": "provider-c", "status": "staging", "task": "conversational", "throughput": 90},
                 ],
             },
             {
                 "id": "acme/beta",
                 "providers": [
-                    {"provider": "provider-b", "status": "live", "task": "text-generation", "throughput": 17},
+                    {"provider": "provider-b", "status": "live", "task": "text-generation", "throughput": 17, "is_free": True},
                 ],
             },
             {
                 "id": "acme/gamma",
                 "providers": [
-                    {"provider": "provider-c", "status": "live", "task": "conversational", "throughput": 10},
+                    {"provider": "provider-c", "status": "live", "task": "conversational", "throughput": 10, "is_free": True},
                 ],
             },
             {
@@ -51,11 +51,56 @@ class KaggleLearningConnectorTests(unittest.TestCase):
 
     def test_requested_teacher_model_is_first_in_panel(self):
         models = [
-            {"id": "acme/alpha", "providers": [{"provider": "p1", "status": "live", "task": "conversational"}]},
-            {"id": "acme/beta", "providers": [{"provider": "p2", "status": "live", "task": "conversational"}]},
+            {"id": "acme/alpha", "providers": [{"provider": "p1", "status": "live", "task": "conversational", "is_free": True}]},
+            {"id": "acme/beta", "providers": [{"provider": "p2", "status": "live", "task": "conversational", "is_free": True}]},
         ]
         selected = connector.choose_teacher_models(models, requested="acme/beta:p2", count=2)
         self.assertEqual(selected[0], "acme/beta:p2")
+
+    def test_paid_provider_is_skipped_by_default(self):
+        models = [
+            {
+                "id": "acme/paid",
+                "providers": [{
+                    "provider": "paid-a",
+                    "status": "live",
+                    "task": "conversational",
+                    "is_free": False,
+                    "throughput": 100,
+                }],
+            },
+            {
+                "id": "acme/free",
+                "providers": [{
+                    "provider": "free-b",
+                    "status": "live",
+                    "task": "conversational",
+                    "is_free": True,
+                    "throughput": 10,
+                }],
+            },
+        ]
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(
+                connector.choose_teacher_models(models, count=2),
+                ["acme/free:free-b"],
+            )
+
+    def test_paid_provider_is_available_only_after_explicit_opt_in(self):
+        models = [{
+            "id": "acme/paid",
+            "providers": [{
+                "provider": "paid-a",
+                "status": "live",
+                "task": "conversational",
+                "is_free": False,
+            }],
+        }]
+        with patch.dict("os.environ", {"VORAX_ALLOW_BILLABLE_INFERENCE": "true"}):
+            self.assertEqual(
+                connector.choose_teacher_models(models, count=1),
+                ["acme/paid:paid-a"],
+            )
 
     def test_no_live_chat_provider_fails_closed(self):
         models = [{
