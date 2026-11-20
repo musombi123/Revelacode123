@@ -1,6 +1,7 @@
 """VORAX Teacher Service: metadata discovery and remote, weight-free model calls."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
