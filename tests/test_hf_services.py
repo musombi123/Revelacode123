@@ -93,6 +93,63 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertEqual(call.call_args.args[0], hf_teacher.HF_CHAT_API)
         self.assertEqual(log.call_args.kwargs["kaggle_t4_used"], False)
 
+    def test_discovery_routes_source_specific_cursors(self):
+        for source in ("models", "spaces", "datasets"):
+            with self.subTest(source=source):
+                with patch.object(
+                    hf_teacher,
+                    "_discover_kind",
+                    return_value=([], None),
+                ) as discover_kind:
+                    hf_teacher.discover(
+                        query="vision",
+                        limit=17,
+                        source=source,
+                        cursor="cursor-" + source,
+                    )
+                discover_kind.assert_called_once_with(
+                    source,
+                    "vision",
+                    17,
+                    "cursor-" + source,
+                )
+
+    def test_ask_rejects_missing_remote_provider_identity(self):
+        response = {"choices": [{"message": {"content": "A teaching response."}}]}
+        with patch.dict(os.environ, {
+            "HF_TOKEN": "not-a-real-token",
+            "VORAX_CHILD_ID": "kaggle-child",
+            "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
+            "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
+        }), patch.object(hf_teacher, "_http_json", return_value=(response, {})):
+            with self.assertRaises(HTTPException) as caught:
+                hf_teacher.ask(
+                    hf_teacher.TeacherAsk(prompt="teach", model_id="acme/example"),
+                    x_child_id="kaggle-child",
+                    x_child_key="child-test-key",
+                )
+        self.assertEqual(caught.exception.status_code, 502)
+
+    def test_ask_rejects_provider_different_from_pinned_model_suffix(self):
+        response = {"choices": [{"message": {"content": "A teaching response."}}]}
+        headers = {"x-inference-provider": "provider-b"}
+        with patch.dict(os.environ, {
+            "HF_TOKEN": "not-a-real-token",
+            "VORAX_CHILD_ID": "kaggle-child",
+            "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
+            "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
+        }), patch.object(hf_teacher, "_http_json", return_value=(response, headers)):
+            with self.assertRaises(HTTPException) as caught:
+                hf_teacher.ask(
+                    hf_teacher.TeacherAsk(
+                        prompt="teach",
+                        model_id="acme/example:provider-a",
+                    ),
+                    x_child_id="kaggle-child",
+                    x_child_key="child-test-key",
+                )
+        self.assertEqual(caught.exception.status_code, 502)
+
     def test_ask_rejects_missing_child_authentication(self):
         with patch.dict(os.environ, {"VORAX_KAGGLE_CHILD_API_KEY": "expected-key"}):
             with self.assertRaises(HTTPException) as caught:
