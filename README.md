@@ -42,7 +42,7 @@ The deployment script never creates or converts a Dataset. It verifies the exist
 
 Children submit methods as GitHub pull requests. Runtime schema validation and V-Lang tests are necessary but do not replace Home review. Pending candidates remain in **vlang/pending/**; they do not enter the executable catalogue before Home merges them. Home-merged methods may be mirrored to **vlang/verified/**.
 
-Only the Runtime Service can write a Runtime-verified pending method to the Vault. Teacher and Kaggle do not write directly to Vault. Home sends Children only **templates/library/index.json** metadata summaries; no Home V-Lang method bodies are pulled into Children. No weights, **hf-model/**, or model architecture **config.json** belong in Vault. PNG/WAV/MP4 are UNKNOWN until real remote outputs pass format verification and independent SHA-256 calculation.
+Only the Runtime Service can write a Runtime-verified pending method to the Vault. Runtime accepts only Teacher responses signed with the shared private `VORAX_TEACHER_ATTESTATION_KEY`; this signing key is held by the two HF Spaces and never given to Kaggle. Teacher and Kaggle do not write directly to Vault. Home sends Children only **templates/library/index.json** metadata summaries; no Home V-Lang method bodies are pulled into Children. No weights, **hf-model/**, or model architecture **config.json** belong in Vault. PNG/WAV/MP4 are UNKNOWN until real remote outputs pass format verification and independent SHA-256 calculation.
 
 ## Local verification
 
