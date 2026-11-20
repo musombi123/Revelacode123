@@ -6,7 +6,7 @@ app_port: 7860
 
 # VORAX Runtime Service
 
-This is a **Docker Space service**, not a model repository. It runs the repository's shared `vorax/` package and V-Lang interpreter.
+This is a **public Docker Space service**, not a model repository. Runtime routes that accept Child work require VORAX Child authentication; the existing Vault remains a private Dataset. It runs the repository's shared `vorax/` package and V-Lang interpreter.
 
 It exposes:
 - `GET /health`
