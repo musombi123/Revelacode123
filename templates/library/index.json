@@ -1,0 +1,305 @@
+{
+  "version": "vorax-home-method-index/v1",
+  "methods_total": 30,
+  "records": [
+    {
+      "id": "code.execute",
+      "domain": "code",
+      "task": "execute a bounded arithmetic code expression",
+      "triggers": [
+        "evaluate code expression",
+        "run arithmetic expression",
+        "execute math expression"
+      ]
+    },
+    {
+      "id": "convert.celsius_fahrenheit",
+      "domain": "conversion",
+      "task": "convert Celsius temperature to Fahrenheit",
+      "triggers": [
+        "celsius to fahrenheit",
+        "c to f"
+      ]
+    },
+    {
+      "id": "convert.kg_pounds",
+      "domain": "conversion",
+      "task": "convert kilograms to pounds",
+      "triggers": [
+        "kilograms to pounds",
+        "kg to pounds"
+      ]
+    },
+    {
+      "id": "convert.km_miles",
+      "domain": "conversion",
+      "task": "convert kilometres to miles",
+      "triggers": [
+        "kilometres to miles",
+        "km to miles"
+      ]
+    },
+    {
+      "id": "geometry.triangle_area",
+      "domain": "geometry",
+      "task": "calculate triangle area from base and height",
+      "triggers": [
+        "triangle area",
+        "area of triangle",
+        "half base times height"
+      ]
+    },
+    {
+      "id": "greeting.identity",
+      "domain": "conversation",
+      "task": "respond to a greeting and identify VORAX truthfully",
+      "triggers": [
+        "hello who are you",
+        "who are you",
+        "hello",
+        "hi vorax",
+        "introduce yourself"
+      ]
+    },
+    {
+      "id": "image.generate",
+      "domain": "image",
+      "task": "generate a verified image from a prompt",
+      "triggers": [
+        "generate image",
+        "make an image",
+        "draw a picture",
+        "create a picture"
+      ]
+    },
+    {
+      "id": "input.classifier",
+      "domain": "routing",
+      "task": "classify one arbitrary user input into a bounded VORAX task type",
+      "triggers": [
+        "classify input x",
+        "classify user request",
+        "input x task classification"
+      ]
+    },
+    {
+      "id": "logo.generate",
+      "domain": "design",
+      "task": "generate a logo image from a brand brief",
+      "triggers": [
+        "make me a logo",
+        "generate logo",
+        "create a logo",
+        "brand mark"
+      ]
+    },
+    {
+      "id": "math.add",
+      "domain": "math",
+      "task": "add two numbers",
+      "triggers": [
+        "add",
+        "sum",
+        "plus"
+      ]
+    },
+    {
+      "id": "math.divide",
+      "domain": "math",
+      "task": "divide the first number by the second",
+      "triggers": [
+        "divide",
+        "quotient",
+        "ratio"
+      ]
+    },
+    {
+      "id": "math.multiply",
+      "domain": "math",
+      "task": "multiply two numbers",
+      "triggers": [
+        "multiply",
+        "product",
+        "times"
+      ]
+    },
+    {
+      "id": "math.percentage_change",
+      "domain": "math",
+      "task": "calculate percentage change from an old value to a new value",
+      "triggers": [
+        "percentage change",
+        "percent change",
+        "growth rate"
+      ]
+    },
+    {
+      "id": "math.percentage_of",
+      "domain": "math",
+      "task": "calculate a percentage of a value",
+      "triggers": [
+        "percentage of",
+        "percent of",
+        "percentage"
+      ]
+    },
+    {
+      "id": "math.subtract",
+      "domain": "math",
+      "task": "subtract the second number from the first",
+      "triggers": [
+        "subtract",
+        "minus",
+        "difference"
+      ]
+    },
+    {
+      "id": "music.generate",
+      "domain": "music",
+      "task": "generate a music artifact from a prompt",
+      "triggers": [
+        "generate music",
+        "make a song",
+        "create a beat",
+        "compose music"
+      ]
+    },
+    {
+      "id": "speech.synthesize",
+      "domain": "audio",
+      "task": "synthesize speech from text",
+      "triggers": [
+        "voice note",
+        "read this aloud",
+        "speak this",
+        "text to speech"
+      ]
+    },
+    {
+      "id": "stats.average",
+      "domain": "statistics",
+      "task": "calculate the arithmetic mean of a number list",
+      "triggers": [
+        "average",
+        "mean"
+      ]
+    },
+    {
+      "id": "stats.count_list",
+      "domain": "statistics",
+      "task": "count items in a list",
+      "triggers": [
+        "count items",
+        "list length",
+        "number of items"
+      ]
+    },
+    {
+      "id": "stats.maximum",
+      "domain": "statistics",
+      "task": "find the largest number in a list",
+      "triggers": [
+        "maximum",
+        "largest",
+        "highest"
+      ]
+    },
+    {
+      "id": "stats.minimum",
+      "domain": "statistics",
+      "task": "find the smallest number in a list",
+      "triggers": [
+        "minimum",
+        "smallest",
+        "lowest"
+      ]
+    },
+    {
+      "id": "stats.sort_ascending",
+      "domain": "statistics",
+      "task": "sort numeric values in ascending order",
+      "triggers": [
+        "sort ascending",
+        "ascending order",
+        "sort numbers"
+      ]
+    },
+    {
+      "id": "stats.sort_descending",
+      "domain": "statistics",
+      "task": "sort numeric values in descending order",
+      "triggers": [
+        "sort descending",
+        "descending order",
+        "reverse sort"
+      ]
+    },
+    {
+      "id": "stats.unique",
+      "domain": "statistics",
+      "task": "remove duplicate values while preserving first occurrence",
+      "triggers": [
+        "unique values",
+        "remove duplicates",
+        "deduplicate"
+      ]
+    },
+    {
+      "id": "text.lowercase",
+      "domain": "text",
+      "task": "convert text to lowercase",
+      "triggers": [
+        "lowercase",
+        "small letters"
+      ]
+    },
+    {
+      "id": "text.reverse",
+      "domain": "text",
+      "task": "reverse the order of characters in text",
+      "triggers": [
+        "reverse text",
+        "reverse string"
+      ]
+    },
+    {
+      "id": "text.uppercase",
+      "domain": "text",
+      "task": "convert text to uppercase",
+      "triggers": [
+        "uppercase",
+        "capital letters"
+      ]
+    },
+    {
+      "id": "text.word_count",
+      "domain": "text",
+      "task": "count whitespace-separated words in text",
+      "triggers": [
+        "word count",
+        "count words"
+      ]
+    },
+    {
+      "id": "translation.swahili",
+      "domain": "language",
+      "task": "translate English text to Swahili",
+      "triggers": [
+        "translate to swahili",
+        "translate into kiswahili",
+        "english to swahili"
+      ]
+    },
+    {
+      "id": "video.generate",
+      "domain": "video",
+      "task": "generate a video artifact from a prompt",
+      "triggers": [
+        "generate video",
+        "make a video",
+        "create a clip",
+        "short video"
+      ]
+    }
+  ]
+}
