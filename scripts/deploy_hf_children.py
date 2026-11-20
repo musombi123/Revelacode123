@@ -223,6 +223,7 @@ def main() -> int:
         "VORAX_HOME_WRITE_TOKEN": env["VORAX_HOME_WRITE_TOKEN"],
         "HF_VAULT_TOKEN": env["HF_VAULT_TOKEN"],
         "HF_VAULT_REPO": VAULT_REPO,
+        "HF_INFERENCE_TOKEN": env["HF_TOKEN"],
         "VORAX_TEACHER_ATTESTATION_KEY": env["VORAX_TEACHER_ATTESTATION_KEY"],
         "VORAX_TEACHER_URL": teacher_url,
         "VORAX_TEACHER_MODEL": args.teacher_model.strip(),
