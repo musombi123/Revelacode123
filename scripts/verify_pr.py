@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Trusted-base verifier for data-only child template pull requests."""
 from __future__ import annotations
-import base64,json,os,re,sys,urllib.parse,urllib.request
+import base64,json,os,re,sys,uuid,urllib.parse,urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from vorax.vlang import parse_document,fingerprint
@@ -18,6 +18,10 @@ def get(path):
 
 def put(path,body):
     req=urllib.request.Request(api+path,data=json.dumps(body).encode(),headers={**headers,"Content-Type":"application/json"},method="PUT")
+    with urllib.request.urlopen(req,timeout=30) as res: return json.loads(res.read().decode())
+
+def post(path,body):
+    req=urllib.request.Request(api+path,data=json.dumps(body).encode(),headers={**headers,"Content-Type":"application/json"},method="POST")
     with urllib.request.urlopen(req,timeout=30) as res: return json.loads(res.read().decode())
 
 pr=get(f"/repos/{repo}/pulls/{number}")
@@ -43,12 +47,31 @@ def reject(message,child=branch_child):
                 document=json.loads(base64.b64decode(current["content"]).decode())
                 blocked=set(document.get("blocked_children",[])); blocked.add(child)
                 document["blocked_children"]=sorted(blocked)
-                put(path,{"message":f"legend: block child {child} after 100 rejected proposals",
-                          "content":base64.b64encode((json.dumps(document,indent=2)+"\n").encode()).decode(),
-                          "sha":current["sha"],"branch":"main"})
-                print(f"HOME BLOCKED CHILD {child}: 100 consecutive rejected proposals")
+                main_ref=get(f"/repos/{repo}/git/ref/heads/main")
+                branch_name=f"home/blocked-child/{child}/{uuid.uuid4().hex[:8]}"
+                post(f"/repos/{repo}/git/refs",{
+                    "ref":"refs/heads/"+branch_name,
+                    "sha":main_ref["object"]["sha"],
+                })
+                put(path,{
+                    "message":f"home: propose block for child {child} after 100 rejected proposals",
+                    "content":base64.b64encode((json.dumps(document,indent=2)+"\n").encode()).decode(),
+                    "sha":current["sha"],
+                    "branch":branch_name,
+                })
+                block_pr=post(f"/repos/{repo}/pulls",{
+                    "title":f"Home security review: block Child {child}",
+                    "body":(
+                        f"Trusted Home verifier observed at least 100 consecutive rejected proposals "
+                        f"from Child {child}. This is a security-control proposal only. It requires "
+                        "human review and is not merged automatically."
+                    ),
+                    "head":branch_name,
+                    "base":"main",
+                })
+                print(f"HOME BLOCKLIST PR: {block_pr.get('html_url')}")
         except Exception as exc:
-            print("WARNING: could not persist child blocklist update: "+type(exc).__name__)
+            print("WARNING: could not open Home blocklist PR: "+type(exc).__name__)
     raise SystemExit("REJECT: "+message)
 
 if not branch_child: reject("branch must use child/<child-id>/<unique-suffix>")
