@@ -22,6 +22,7 @@ Teacher secrets:
 - `HF_READ_TOKEN` — optional Hub metadata-read token
 - `VORAX_KAGGLE_CHILD_API_KEY`
 - `VORAX_TEACHER_ATTESTATION_KEY` — shared only with the Runtime Space; never add it to Kaggle.
+- `VORAX_ALLOW_BILLABLE_INFERENCE=false` — free-provider-only by default; `true` is an explicit billable opt-in.
 - `VORAX_CHILD_ID=kaggle-child`
 
 The Teacher never writes to the VORAX Vault. Only the Runtime Service may write a Runtime-verified pending method.
