@@ -140,7 +140,8 @@ def read_home_metadata_index(read_token: str) -> dict:
     return index
 
 
-def discover_world(query: str, page_limit: int = 5) -> dict:
+def discover_world(query: str, page_limit: int = 100) -> dict:
+    """Page through model, Space and Dataset metadata; never request repository files or weights."""
     encoded = urllib.parse.urlencode({
         "query": query[:160],
         "limit": "100",
@@ -149,27 +150,33 @@ def discover_world(query: str, page_limit: int = 5) -> dict:
     _, first = request_json(TEACHER_URL, "/teacher/discover?" + encoded, timeout=60)
     if first.get("status") != "metadata_only" or first.get("weights_downloaded") is not False:
         raise ConnectorError("Teacher did not confirm metadata-only discovery")
+
     models = list(first.get("models") or [])
     resources = list(first.get("resources") or [])
-    cursor = first.get("next_cursor")
-    pages = 1
+    cursors = dict(first.get("next_cursors") or {})
+    pages_by_source = {"models": 1, "spaces": 1, "datasets": 1}
 
-    while cursor and pages < page_limit:
-        next_query = urllib.parse.urlencode({
-            "query": query[:160],
-            "limit": "100",
-            "source": "models",
-            "cursor": cursor,
-        })
-        _, page = request_json(TEACHER_URL, "/teacher/discover?" + next_query, timeout=60)
-        if page.get("weights_downloaded") is not False:
-            raise ConnectorError("Teacher discovery reported a weight download")
-        page_models = page.get("models") or []
-        models.extend(page_models)
-        resources.extend(page_models)
-        cursor = page.get("next_cursor")
-        pages += 1
+    for source in ("models", "spaces", "datasets"):
+        cursor = cursors.get(source)
+        while cursor and pages_by_source[source] < page_limit:
+            next_query = urllib.parse.urlencode({
+                "query": query[:160],
+                "limit": "100",
+                "source": source,
+                "cursor": cursor,
+            })
+            _, page = request_json(TEACHER_URL, "/teacher/discover?" + next_query, timeout=60)
+            if page.get("status") != "metadata_only" or page.get("weights_downloaded") is not False:
+                raise ConnectorError(f"Teacher {source} pagination did not remain metadata-only")
+            page_resources = page.get("resources") or []
+            resources.extend(page_resources)
+            if source == "models":
+                models.extend(page.get("models") or [])
+            cursors = dict(page.get("next_cursors") or {source: page.get("next_cursor")})
+            cursor = cursors.get(source)
+            pages_by_source[source] += 1
 
+    remaining = {source: bool(cursor) for source, cursor in cursors.items()}
     return {
         "status": "metadata_only",
         "query": query,
@@ -177,8 +184,10 @@ def discover_world(query: str, page_limit: int = 5) -> dict:
         "resources": resources,
         "models_found": len(models),
         "resources_found": len(resources),
-        "pages_read": pages,
-        "pagination_remaining": bool(cursor),
+        "pages_read": sum(pages_by_source.values()),
+        "pages_by_source": pages_by_source,
+        "pagination_remaining": any(remaining.values()),
+        "pagination_remaining_by_source": remaining,
         "weights_downloaded": False,
         "local_model_loaded": False,
     }
@@ -350,12 +359,13 @@ def main() -> int:
         report["home"]["method_bodies_downloaded"] = False
 
         query = args.discovery_query.strip() or args.task.strip()
-        discovery = discover_world(query, page_limit=5)
+        discovery = discover_world(query, page_limit=100)
         report["discovery"] = {
             key: discovery.get(key)
             for key in (
                 "status", "query", "models_found", "resources_found",
-                "pages_read", "pagination_remaining", "weights_downloaded",
+                "pages_read", "pages_by_source", "pagination_remaining",
+                "pagination_remaining_by_source", "weights_downloaded",
             )
         }
         if not discovery["models"]:
