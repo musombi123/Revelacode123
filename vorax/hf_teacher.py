@@ -151,7 +151,7 @@ def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None)
     if cursor:
         params.append(("cursor", cursor))
     if kind == "models":
-        params.append(("inference_provider", "all"))
+        # Keep the complete Hub catalogue; provider availability is returned as metadata.
         params.extend([
             ("expand[]", "tags"),
             ("expand[]", "downloads"),
