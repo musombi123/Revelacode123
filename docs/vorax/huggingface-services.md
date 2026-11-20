@@ -16,6 +16,8 @@ VORAX is a learning engine, not a model. It has one Input X, one V-Lang, and one
 
 The two Spaces are public HTTP services protected by the VORAX Child key on all learning, inference, execution and verification routes. Health and model metadata discovery are read-only. This avoids making Kaggle authenticate to a private Space separately. The Vault remains private.
 
+Kaggle's connector reads only **VORAX_HOME_READ_TOKEN** and **VORAX_KAGGLE_CHILD_API_KEY**. It does not request or read **VORAX_HOME_WRITE_TOKEN** or **HF_VAULT_TOKEN**; those write credentials remain exclusive to Runtime.
+
 Kaggle is the on-demand Away Hunter. It discovers model, Space and Dataset metadata, reads only Home's metadata index, asks a bounded panel of remote Teachers (proposal → independent review → synthesis), and submits one testable candidate to Runtime. Its source is changed to this learning-only design; live Kaggle validation remains a separate proof step. It must not download weights, run Diffusers, generate media locally, write directly to Vault, process a queue during connection tests, or certify itself. Koyeb is paused.
 
 RevelaAI remains untouched on Gemini. AWS remains postponed.
@@ -31,7 +33,7 @@ Routes:
 | Route | Behavior |
 |---|---|
 | **GET /health** | 200 with service=teacher, configuration booleans, weights_downloaded=false, local_model_loaded=false, kaggle_t4_used=false |
-| **GET /teacher/discover?query=X&limit=N&source=all** | Metadata for Hub models, Spaces and Datasets: id, tags, description, downloads, likes, pipeline/library/SDK metadata |
+| **GET /teacher/discover?query=X&limit=N&source=all** | Metadata for Hub models, Spaces and Datasets plus the Hugging Face Inference Providers router catalogue: IDs, tags, descriptions, downloads, likes, pipeline/library/SDK data and live provider mappings |
 | **POST /teacher/ask** | Authenticated remote chat completion through Hugging Face Inference Providers |
 
 Example request fields: prompt and model_id, for example owner/model:provider. The ask route requires x-child-id and x-child-key. Kaggle can consult several discovered models in one learning pass. Each response and service log includes model ID, provider (or unknown if the provider header is absent), remote inference status, and kaggle_t4_used=false. There is no local model runtime or weight cache. The inference call is explicit; deployment health checks do not consume inference quota.
@@ -73,7 +75,7 @@ Candidate trust flow:
 3. Runtime reruns schema validation and every declared test using the repository's trusted interpreter.
 4. Runtime writes only to **vlang/pending/** and updates **vlang/pending/index.json**, verification report and SHA-256 manifest.
 5. Runtime opens a GitHub Home PR. The pending method is deliberately **not** inserted into the executable Runtime catalogue.
-6. After Home merges the PR, Runtime may promote the method bytes already in Vault pending to **vlang/verified/** when the refreshed Home metadata index includes its ID. It never pulls the method implementation from Home.
+6. After Home merges the PR, Runtime may promote the method bytes already in Vault pending to **vlang/verified/** when the refreshed Home metadata index contains the same ID, domain, task, triggers and exact canonical method SHA-256. It never pulls the method implementation from Home.
 
 Runtime Space secrets:
 - **VORAX_CHILD_ID=kaggle-child**.
@@ -103,7 +105,7 @@ Required existing index/manifest/report files:
 
 Artifact prefixes remain **artifacts/images/**, **artifacts/audio/**, and **artifacts/video/**. Empty directories may not appear in Hub listings until a file is uploaded. No model weights, model configs or model training checkpoints belong in this Dataset.
 
-The Runtime writes a pending method only after trusted V-Lang tests pass. Teacher and Kaggle have no direct Vault write path. When Home's metadata-only index confirms the merged method ID, Runtime rechecks that the method already in Vault pending has the same domain, task and triggers, revalidates its V-Lang tests and SHA-256, then promotes that Vault-stored method to **vlang/verified/**. Runtime never downloads a Home method body. Media enters the Vault only after real format verification and SHA-256 calculation. Until a real PNG/WAV/MP4 is independently verified, its status remains UNKNOWN.
+The Runtime writes a pending method only after trusted V-Lang tests pass. Teacher and Kaggle have no direct Vault write path. When Home's metadata-only index confirms the merged method ID, Runtime rechecks that the method already in Vault pending has the same domain, task and triggers, matches the SHA-256 published in Home's metadata index, and passes the V-Lang tests again, then promotes that Vault-stored method to **vlang/verified/**. Runtime never downloads a Home method body. Media enters the Vault only after real format verification and SHA-256 calculation. Until a real PNG/WAV/MP4 is independently verified, its status remains UNKNOWN.
 
 ## 4. Deployment
 
