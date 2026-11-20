@@ -209,7 +209,7 @@ def kaggle_status():
         kaggle_kernel=kernel,
         status_excerpt=output,
     )
-    if state == "completed_not_running":
+    if state in {"completed_not_running", "failed_not_running"}:
         collect_report(kernel)
     return row
 
@@ -333,6 +333,36 @@ def heartbeat():
     koyeb = probe("koyeb-child", os.getenv("VORAX_KOYEB_URL", ""))
     probe("hf-backup-child", os.getenv("VORAX_HF_CHILD_URL", ""))
     if koyeb.get("uptime_status") == "healthy" and os.getenv("VORAX_KOYEB_CHILD_API_KEY"):
+        health = koyeb.get("health") or {}
+        if health.get("vault_configured"):
+            try:
+                request = Request(
+                    os.getenv("VORAX_KOYEB_URL", "").rstrip("/") + "/v1/vault/sync",
+                    data=b"{}",
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-child-id": "koyeb-child",
+                        "x-child-key": os.environ["VORAX_KOYEB_CHILD_API_KEY"],
+                    },
+                    method="POST",
+                )
+                with urlopen(request, timeout=90) as response:
+                    vault = json.loads(response.read(65536).decode("utf-8"))
+                log("hf-vault", method="Home-to-Vault sync",
+                    verification="mirrored_with_artifact_proofs",
+                    uptime_status="sync_completed",
+                    methods_mirrored=vault.get("methods_mirrored", 0),
+                    artifacts_verified_and_mirrored=vault.get("artifacts_verified_and_mirrored", 0),
+                    bytes_uploaded=vault.get("bytes_uploaded", 0),
+                    vault_capacity_verified=vault.get("vault_capacity_verified", False))
+            except Exception as exc:
+                log("hf-vault", method="Home-to-Vault sync",
+                    verification="not_synced", uptime_status="sync_failed",
+                    failure=type(exc).__name__ + ": " + str(exc)[:160])
+        else:
+            log("hf-vault", method="Home-to-Vault sync",
+                verification="not_synced", uptime_status="not_configured",
+                failure="HF Vault token is not configured on Koyeb")
         try:
             request = Request(
                 os.getenv("VORAX_KOYEB_URL", "").rstrip("/") + "/v1/devour/discover",
