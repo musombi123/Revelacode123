@@ -111,6 +111,12 @@ def _model_for(name: str) -> str:
     return model
 
 def _hf(name: str, payload: Any, timeout: int, *, binary: bool) -> tuple[bytes, str]:
+    allow_billable = os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"}
+    if not allow_billable:
+        raise ToolError(
+            "Remote tool-provider calls are disabled by default; enable "
+            "VORAX_ALLOW_BILLABLE_INFERENCE explicitly before using a billable adapter."
+        )
     token = os.getenv("HF_INFERENCE_TOKEN") or os.getenv("HF_TOKEN")
     if not token:
         raise ToolError("Hugging Face inference token is not configured")
