@@ -6,11 +6,9 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from vorax.engine import compose, find_template
-from vorax.github_home import GitHubHomeError, fetch_method_index, submit_template
+from vorax.github_home import fetch_method_index
 from vorax.store import TemplateStore
-from vorax.teacher import propose_template, teacher_configured
-from vorax.vlang import TemplateError, validate_template, execute
-from vorax.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
+from vorax.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt
 from vorax.vault import VaultError
 from vorax.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
 from vorax.input_x import discover_method_sources
@@ -31,40 +29,6 @@ class ComposeRequest(BaseModel):
     template_id: str|None=None
     task: str|None=None
     inputs: dict=Field(default_factory=dict)
-class ImportRequest(BaseModel):
-    template: dict
-class TeacherRequest(BaseModel):
-    task: str
-    inputs: dict
-    triggers: list[str]
-class SubmitRequest(BaseModel):
-    template_id: str
-
-def actor(request: Request):
-    admin=request.headers.get("x-legend-admin-key","")
-    child_id=request.headers.get("x-child-id","")
-    child_key=request.headers.get("x-child-key","")
-    if ADMIN_KEY and hmac.compare_digest(admin,ADMIN_KEY): return "admin"
-    if CHILD_ID and CHILD_KEY and child_id==CHILD_ID and hmac.compare_digest(child_key,CHILD_KEY):
-        if STORE.child_blocked(CHILD_ID): raise HTTPException(403,"Child is blocked after 100 consecutive rejected proposals")
-        return CHILD_ID
-    raise HTTPException(403,"Learning and submission require admin or registered child credentials")
-
-def save_candidate(candidate: dict,who: str):
-    record=dict(candidate); provenance=dict(record.get("provenance",{})); provenance["child_id"]=who
-    if who=="admin" and provenance.get("kind")=="seed": provenance["kind"]="manual"
-    record["provenance"]=provenance
-    try:
-        validate_template(record); STORE.add(record)
-    except Exception:
-        if who!="admin":
-            failures=STORE.record_failure(who)
-            if failures>=100: raise HTTPException(403,"Child automatically blocked after 100 consecutive rejected proposals")
-        raise
-    if who!="admin": STORE.record_success(who)
-    return record
-
-
 def runtime_tool_executor(name: str, inputs: dict):
     """Use only registered providers. Kaggle never runs local model or media generation."""
     return execute_registered_tool(name, inputs)
@@ -77,8 +41,7 @@ def health():
         "engine": "VORAX",
         "child_role": os.getenv("VORAX_CHILD_ROLE", "shared").strip().lower(),
         "templates": len(STORE.all()),
-        "teacher_configured": teacher_configured(),
-        "home_repository": HOME_REPO,
+                "home_repository": HOME_REPO,
         "home_method_bodies_loaded": False,
         "vault_configured": bool(os.getenv("HF_VAULT_TOKEN")),
         "vault_repository": os.getenv("HF_VAULT_REPO", "Musombi/revelacode-vorax-vault"),
@@ -99,35 +62,6 @@ def templates():
 @app.post("/v1/compose")
 def compose_route(body: ComposeRequest):
     return compose(STORE.all(),template_id=body.template_id,task=body.task,inputs=body.inputs)
-
-@app.post("/v1/learn/import")
-def learn_import(body: ImportRequest,request: Request):
-    who=actor(request)
-    try: record=save_candidate(body.template,who)
-    except (TemplateError,ValueError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {"status":"verified_and_stored","template_id":record["id"],"raw_teacher_text_stored":False,"template_count":len(STORE.all())}
-
-@app.post("/v1/learn/teacher")
-def learn_teacher(body: TeacherRequest,request: Request):
-    who=actor(request)
-    try: record=save_candidate(propose_template(body.task,body.inputs,body.triggers),who)
-    except RuntimeError as exc:
-        if "Teacher is not configured" in str(exc): raise HTTPException(503,str(exc))
-        raise HTTPException(422,str(exc)) from exc
-    except (TemplateError,ValueError) as exc: raise HTTPException(422,str(exc)) from exc
-    return {"status":"teacher_proposal_verified_and_stored","template_id":record["id"],
-            "teacher":"openai-compatible","raw_teacher_text_stored":False}
-
-@app.post("/v1/submit")
-def submit(body: SubmitRequest,request: Request):
-    who=actor(request); record=STORE.get(body.template_id)
-    if record is None: raise HTTPException(404,"Template not found")
-    if record["provenance"]["kind"]=="seed": raise HTTPException(409,"Seed templates are already in Home")
-    child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
-    try: result=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
-    except (GitHubHomeError,ValueError) as exc: raise HTTPException(502,str(exc)) from exc
-    return {"status":"submitted_for_home_verification",**result}
-
 
 def _answer_text(text: str) -> dict:
     """Small, deterministic text bridge. It parses only explicit, supported numeric forms."""
@@ -219,33 +153,6 @@ def huggingface_style_inference(model_id: str,body: dict):
 
 
 
-@app.post("/v1/devour/import")
-def devour_import_candidate(body: dict, request: Request):
-    who=actor(request)
-    candidate=body.get("candidate")
-    modality=str(body.get("modality","text")).lower()
-    teacher_id=str(body.get("teacher_model_id","gemini-teacher"))
-    if not isinstance(candidate,dict): raise HTTPException(422,"candidate must be a V-Lang object")
-    if modality not in {"image","audio","video","music","code","multilingual","text"}: raise HTTPException(422,"unsupported modality")
-    candidate["provenance"]={"kind":"teacher","teacher":"gemini-teacher","teacher_model_id":teacher_id,"modality":modality,"child_id":who}
-    try:
-        validate_template(candidate)
-        for case in candidate.get("tests",[]):
-            execute(candidate,case["input"])
-        record=save_candidate(candidate,who)
-    except Exception as exc:
-        DEVOUR.bump("rejected")
-        return {"status":"rejected_by_verifier","reason":str(exc)[:500],"raw_teacher_text_stored":False}
-    DEVOUR.bump("verified")
-    if body.get("submit_home",True):
-        try:
-            child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
-            result=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
-            return {"status":"verified_and_submitted","template_id":record["id"],"home_submission":result,"raw_teacher_text_stored":False}
-        except Exception as exc:
-            return {"status":"verified_local_submission_failed","template_id":record["id"],"reason":type(exc).__name__,"raw_teacher_text_stored":False}
-    return {"status":"verified_local","template_id":record["id"],"raw_teacher_text_stored":False}
-
 @app.get("/v1/devour/catalog")
 def devour_catalog(modality: str|None=None, limit: int=100):
     return {"catalogued":DEVOUR.list(modality,limit),"stats":DEVOUR.stats()}
@@ -276,59 +183,9 @@ def devour_conduct(body: dict, request: Request):
     if not task or len(task)>500: raise HTTPException(422,"task must be 1–500 characters")
     return {"modality":modality,"task":task,"teacher_conduct_prompt":conduct_prompt(modality,task,inputs),"status":"conduct_prompt_ready","raw_teacher_content_stored":False}
 
-@app.post("/v1/devour/learn")
-def devour_learn(body: dict, request: Request):
-    who=actor(request)
-    modality=str(body.get("modality","text")).lower()
-    task=str(body.get("task","")).strip()
-    inputs=body.get("inputs") if isinstance(body.get("inputs"),dict) else {}
-    triggers=body.get("triggers") if isinstance(body.get("triggers"),list) else []
-    lesson=str(body.get("lesson","")).strip()
-    model_id=str(body.get("teacher_model_id","teacher-unidentified"))
-    if modality not in {"image","audio","video","music","code","multilingual","text"}:
-        raise HTTPException(422,"unsupported modality")
-    if not task or not lesson or len(task)>500 or len(lesson)>16000:
-        raise HTTPException(422,"task and bounded lesson (max 16000 chars) are required")
-    # This endpoint ingests an explicit teacher lesson. It never fetches model weights.
-    # Extract only a testable symbolic candidate; opaque media tool adapters are rejected.
-    spec={"allowed_operations":["add","subtract","multiply","divide","percentage_of","percentage_change","average","minimum","maximum","sort_ascending","sort_descending","unique","count","word_count","uppercase","lowercase","reverse_text","celsius_to_fahrenheit","fahrenheit_to_celsius","km_to_miles","miles_to_km","kg_to_pounds","pounds_to_kg","implies","logical_and","logical_or","logical_not","absolute","round_number","greater_than","less_than","equals","identity"]}
-    base=os.getenv("LEGEND_TEACHER_BASE_URL","https://api.openai.com/v1").rstrip("/")
-    key=os.getenv("LEGEND_TEACHER_API_KEY"); model=os.getenv("LEGEND_TEACHER_MODEL")
-    if not key or not model: raise HTTPException(503,"Teacher API not configured; configure Gemini-compatible endpoint credentials.")
-    prompt=extraction_prompt(modality,lesson,task,inputs,spec)
-    payload={"model":model,"temperature":0,"response_format":{"type":"json_object"},"messages":[{"role":"system","content":"You are a method extractor. Do not fabricate tests or tool execution. Return JSON only."},{"role":"user","content":prompt}]}
-    import urllib.request
-    req=urllib.request.Request(base+"/chat/completions",data=__import__("json").dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
-    try:
-        with urllib.request.urlopen(req,timeout=45) as res: teacher_payload=__import__("json").loads(res.read().decode())
-        extracted=__import__("json").loads(teacher_payload["choices"][0]["message"]["content"])
-    except Exception as exc: raise HTTPException(502,"Teacher method extraction failed: "+type(exc).__name__) from exc
-    candidate=extracted.get("candidate")
-    if not isinstance(candidate,dict): return {"status":"not_devoured","reason":extracted.get("reason","Teacher method requires unavailable tools or cannot be represented in T-Lang"),"modality":modality,"teacher_model_id":model_id,"raw_lesson_stored":False}
-    candidate["provenance"]={"kind":"teacher","teacher":"gemini-teacher","teacher_model_id":model_id,"modality":modality,"child_id":who}
-    try:
-        validate_template(candidate)
-        # Execute each declared test before accepting the candidate.
-        for case in candidate.get("tests",[]):
-            execute(candidate,case["input"])
-        record=save_candidate(candidate,who)
-    except Exception as exc:
-        DEVOUR.bump("rejected")
-        return {"status":"rejected_by_verifier","reason":str(exc)[:500],"modality":modality,"raw_lesson_stored":False}
-    DEVOUR.bump("verified")
-    DEVOUR.set_status(model_id,"method_learned")
-    if body.get("submit_home",True):
-        try:
-            child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
-            submitted=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
-            return {"status":"verified_and_submitted","template_id":record["id"],"modality":modality,"teacher_model_id":model_id,"home_submission":submitted,"raw_lesson_stored":False}
-        except Exception as exc:
-            return {"status":"verified_local_submission_failed","template_id":record["id"],"reason":type(exc).__name__,"raw_lesson_stored":False}
-    return {"status":"verified_local","template_id":record["id"],"modality":modality,"raw_lesson_stored":False}
-
 @app.get("/v1/devour/stats")
 def devour_stats():
-    return {"catalogued_models":len(DEVOUR.list(limit=500)),"devour":DEVOUR.stats(),"teacher_configured":teacher_configured(),"stored_templates":len(STORE.all())}
+    return {"catalogued_models":len(DEVOUR.list(limit=500)),"devour":DEVOUR.stats(),"stored_templates":len(STORE.all())}
 
 @app.get("/v1/tlang/spec")
 @app.get("/v1/vlang/spec")
