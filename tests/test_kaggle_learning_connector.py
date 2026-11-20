@@ -13,6 +13,24 @@ SPEC.loader.exec_module(connector)
 
 
 class KaggleLearningConnectorTests(unittest.TestCase):
+    def test_task_input_prefers_explicit_cli_then_environment_then_optional_secret(self):
+        self.assertEqual(
+            connector.resolve_task_input("  cli task  ", "environment task", "secret task"),
+            "cli task",
+        )
+        self.assertEqual(
+            connector.resolve_task_input("", "  environment task  ", "secret task"),
+            "environment task",
+        )
+        self.assertEqual(
+            connector.resolve_task_input("", "", "  secret task  "),
+            "secret task",
+        )
+
+    def test_task_input_without_values_is_health_only(self):
+        self.assertEqual(connector.resolve_task_input("", "", ""), "")
+        self.assertEqual(connector.resolve_task_input("   ", None, "  "), "")
+
     def test_teacher_panel_selects_distinct_live_conversational_providers(self):
         models = [
             {
