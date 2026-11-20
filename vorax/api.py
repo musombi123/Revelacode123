@@ -1,40 +1,31 @@
 """REVELACODE VORAX API: universal Input X over verified V-Lang methods."""
 from __future__ import annotations
-import hmac, os, re, time, uuid, subprocess
-from pathlib import Path
+import hmac, os, re, time, uuid
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from vorax.engine import compose, find_template
-from vorax.github_home import GitHubHomeError, submit_template, sync_library, enqueue_kaggle_x
+from vorax.github_home import GitHubHomeError, fetch_method_index, submit_template
 from vorax.store import TemplateStore
 from vorax.teacher import propose_template, teacher_configured
-from vorax.vlang import TemplateError, parse_document, validate_template, execute
+from vorax.vlang import TemplateError, validate_template, execute
 from vorax.devour import DiscoveryCatalog, discover_hf_models, conduct_prompt, extraction_prompt
-from vorax.vault import mirror_home_and_artifacts, VaultError
+from vorax.vault import VaultError
 from vorax.tools import CONTRACTS as TOOL_CONTRACTS, ARTIFACT_ROOT as TOOL_ARTIFACT_ROOT, registry as tool_registry_data, execute_tool_dict as execute_registered_tool
-from vorax.input_x import classify_input_x, handle_input_x, discover_method_sources
+from vorax.input_x import discover_method_sources
+from vorax.builtins import handle_builtin_input
 
-ROOT=Path(__file__).resolve().parents[1]
 STORE=TemplateStore(os.getenv("LEGEND_DB_PATH","data/legend.sqlite3"))
 DEVOUR=DiscoveryCatalog()
 HOME_REPO=os.getenv("LEGEND_HOME_REPO","musombi123/Revelacode123")
 HOME_BRANCH=os.getenv("LEGEND_HOME_BRANCH","main")
 CHILD_ID=os.getenv("VORAX_CHILD_ID",os.getenv("LEGEND_CHILD_ID",""))
-CHILD_KEY=os.getenv("VORAX_CHILD_API_KEY",os.getenv("LEGEND_CHILD_API_KEY",""))
+CHILD_KEY=os.getenv("VORAX_KAGGLE_CHILD_API_KEY",os.getenv("VORAX_CHILD_API_KEY",os.getenv("LEGEND_CHILD_API_KEY","")))
 ADMIN_KEY=os.getenv("LEGEND_ADMIN_API_KEY","")
-app=FastAPI(title="REVELACODE VORAX",version="0.2.0",description="One Input X; Home-first V-Lang execution with bounded registered tools.")
+app=FastAPI(title="REVELACODE VORAX API",version="1.0.0",description="One Input X; trusted V-Lang verification. Home method bodies are never loaded into Children.")
 origins=[x.strip() for x in os.getenv("LEGEND_CORS_ORIGINS","*").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware,allow_origins=origins,allow_methods=["GET","POST","OPTIONS"],allow_headers=["*"])
-
-def load_local_seeds():
-    folder=ROOT/"templates"/"library"
-    if not folder.exists(): return
-    for pattern in ("*.vlang","*.tlang"):
-        for path in folder.rglob(pattern):
-            for record in parse_document(path.read_text(encoding="utf-8")): STORE.add(record)
-load_local_seeds()
 
 class ComposeRequest(BaseModel):
     template_id: str|None=None
@@ -75,42 +66,26 @@ def save_candidate(candidate: dict,who: str):
 
 
 def runtime_tool_executor(name: str, inputs: dict):
-    """Bind media execution to the Child's actual role; Kaggle never falls back to remote inference."""
-    role=os.getenv("VORAX_CHILD_ROLE","").strip().lower()
-    media_tools={"image.generate","audio.tts","audio.transcribe","video.generate","music.generate"}
-    if role=="kaggle" and name in media_tools:
-        return execute_registered_tool(name,inputs,provider="kaggle-gpu")
-    return execute_registered_tool(name,inputs)
-
-
-def gpu_telemetry():
-    try:
-        p=subprocess.run(["nvidia-smi","--query-gpu=name,memory.total,memory.used,utilization.gpu","--format=csv,noheader,nounits"],capture_output=True,text=True,timeout=3,check=True)
-        rows=[x.strip() for x in p.stdout.splitlines() if x.strip()]
-        return {"available":bool(rows),"source":"nvidia-smi","devices":rows}
-    except Exception: return {"available":False,"source":"nvidia-smi","devices":[]}
+    """Use only registered providers. Kaggle never runs local model or media generation."""
+    return execute_registered_tool(name, inputs)
 
 @app.get("/health")
 @app.get("/v1/health")
 def health():
-    return {"status":"ok","engine":"VORAX","child_role":os.getenv("VORAX_CHILD_ROLE","shared").strip().lower(),"templates":len(STORE.all()),"teacher_configured":teacher_configured(),
-      "home_repository":HOME_REPO,"vault_configured":bool(os.getenv("HF_VAULT_TOKEN")),
-      "vault_repository":os.getenv("HF_VAULT_REPO","Musombi/revelacode-vorax-vault"),
-      "local_gpu":gpu_telemetry(),"model_required_for_composition":False}
+    return {
+        "status": "ok",
+        "engine": "VORAX",
+        "child_role": os.getenv("VORAX_CHILD_ROLE", "shared").strip().lower(),
+        "templates": len(STORE.all()),
+        "teacher_configured": teacher_configured(),
+        "home_repository": HOME_REPO,
+        "home_method_bodies_loaded": False,
+        "vault_configured": bool(os.getenv("HF_VAULT_TOKEN")),
+        "vault_repository": os.getenv("HF_VAULT_REPO", "Musombi/revelacode-vorax-vault"),
+        "local_model_loaded": False,
+        "weights_downloaded": False,
+    }
 
-@app.get("/v1/gpu")
-def gpu_status():
-    return {"status":"observed","local_gpu":gpu_telemetry(),
-      "note":"Remote provider inference is not evidence of local Space GPU use."}
-
-@app.post("/v1/vault/sync")
-def vault_sync(request: Request):
-    actor(request)
-    try:
-        records=sync_library(HOME_REPO,HOME_BRANCH,token=os.getenv("LEGEND_HOME_READ_TOKEN",""))
-        return {"status":"mirrored","home_repository":HOME_REPO,**mirror_home_and_artifacts(records,TOOL_ARTIFACT_ROOT)}
-    except VaultError as exc: raise HTTPException(503,str(exc)) from exc
-    except Exception as exc: raise HTTPException(502,"Vault mirror failed: "+type(exc).__name__) from exc
 
 @app.get("/v1/templates")
 def templates():
@@ -142,20 +117,6 @@ def learn_teacher(body: TeacherRequest,request: Request):
     except (TemplateError,ValueError) as exc: raise HTTPException(422,str(exc)) from exc
     return {"status":"teacher_proposal_verified_and_stored","template_id":record["id"],
             "teacher":"openai-compatible","raw_teacher_text_stored":False}
-
-@app.post("/v1/sync")
-def sync(request: Request):
-    actor(request)
-    try: remote=sync_library(HOME_REPO,HOME_BRANCH,token=os.getenv("LEGEND_HOME_READ_TOKEN",""))
-    except GitHubHomeError as exc: raise HTTPException(502,str(exc)) from exc
-    added=0
-    try:
-        for record in remote:
-            before=STORE.get(record["id"]); STORE.add(record)
-            if before is None: added+=1
-    except ValueError as exc: raise HTTPException(409,f"Home catalog conflict: {exc}") from exc
-    return {"status":"synced","home":f"{HOME_REPO}@{HOME_BRANCH}","remote_templates":len(remote),
-            "new_local_templates":added,"local_total":len(STORE.all())}
 
 @app.post("/v1/submit")
 def submit(body: SubmitRequest,request: Request):
@@ -421,81 +382,56 @@ def tool_artifact(artifact_id: str, request: Request):
 
 
 # Shared Home cache: refresh periodically so every VORAX child sees merged methods.
-_HOME_SYNC_AT=0.0
-_HOME_SYNC_STATUS={"status":"not_checked","new_templates":0}
+_HOME_INDEX = None
+_HOME_INDEX_AT = 0.0
 
-def _refresh_home_catalog():
-    global _HOME_SYNC_AT,_HOME_SYNC_STATUS
-    if time.monotonic()-_HOME_SYNC_AT < 60:
-        return _HOME_SYNC_STATUS
+
+def _home_metadata_index(force: bool = False):
+    global _HOME_INDEX, _HOME_INDEX_AT
+    if not force and _HOME_INDEX is not None and time.monotonic() - _HOME_INDEX_AT < 60:
+        return _HOME_INDEX
+    token = os.getenv("LEGEND_HOME_READ_TOKEN", os.getenv("VORAX_HOME_READ_TOKEN", ""))
+    if not token:
+        _HOME_INDEX = None
+        return None
     try:
-        remote=sync_library(HOME_REPO,HOME_BRANCH,token=os.getenv("LEGEND_HOME_READ_TOKEN",""))
-        added=0
-        for record in remote:
-            before=STORE.get(record["id"])
-            STORE.add(record)
-            if before is None: added+=1
-        _HOME_SYNC_STATUS={"status":"synced","new_templates":added,"home_templates":len(remote)}
-    except Exception as exc:
-        _HOME_SYNC_STATUS={"status":"cached","reason":type(exc).__name__,"home_templates":len(STORE.all())}
-    _HOME_SYNC_AT=time.monotonic()
-    return _HOME_SYNC_STATUS
+        # Home returns only compact index metadata; no V-Lang method body is downloaded.
+        _HOME_INDEX = fetch_method_index(HOME_REPO, HOME_BRANCH, token)
+    except Exception:
+        _HOME_INDEX = None
+    _HOME_INDEX_AT = time.monotonic()
+    return _HOME_INDEX
+
+
+@app.get("/vorax/home-index")
+def home_method_index(request: Request):
+    actor(request)
+    index = _home_metadata_index(force=True)
+    if index is None:
+        raise HTTPException(503, "Home metadata-only index is unavailable")
+    return {**index, "method_bodies_included": False}
 
 
 @app.post("/vorax/x")
 def vorax_input_x(body: dict, request: Request):
-    """Universal VORAX intake. Callers send X only; VORAX owns classification and routing."""
-    value=body.get("x")
-    if not isinstance(value,str) or not value.strip() or len(value)>12000:
-        raise HTTPException(422,"x must be non-empty text of at most 12000 characters")
-    try:
-        classification=classify_input_x(value,STORE.all())
-    except ValueError as exc:
-        raise HTTPException(422,str(exc)) from exc
-    # Koyeb is the light router: heavyweight modalities are queued for Kaggle, never executed here.
-    if os.getenv("VORAX_CHILD_ROLE","").strip().lower()=="koyeb" and classification.get("task_type") in {"image","logo","music","video","speech","audio","3d"}:
-        actor(request)
-        try:
-            queued=enqueue_kaggle_x(HOME_REPO,value,os.getenv("LEGEND_GITHUB_TOKEN",""))
-        except (GitHubHomeError,ValueError) as exc:
-            raise HTTPException(503,"Heavy X could not be queued for Kaggle: "+str(exc)[:240]) from exc
-        return {"status":"queued","engine":"VORAX","classification":classification,
-                "destination_child":"kaggle-child","verification":"not_executed","queue":queued}
-
-    home_status=_refresh_home_catalog()
-    # Any paid/external tool call must come through an authenticated child or admin.
-    if classification.get("tool"):
-        actor(request)
-    result=handle_input_x(value,STORE.all(),tool_executor=runtime_tool_executor)
-    result["engine"]="VORAX"
-    result["home_sync"]=home_status
-
-    # Unknown X triggers bounded public-source discovery. A configured teacher may
-    # propose a V-Lang method; proposal failures never replace the current response.
-    if result.get("status")=="unknown" and not result.get("template_id"):
-        sources=discover_method_sources(str(classification["task_type"]),value)
-        result["discovery"]={"status":sources["status"],"source_count":len(sources["sources"]),
-                             "sources":sources["sources"],"method_evidence":sources.get("method_evidence",[]),
-                             "method_evidence_count":len(sources.get("method_evidence",[])),
-                             "source_errors":sources["source_errors"],"weights_downloaded":False}
-        auto_learn=os.getenv("VORAX_AUTO_LEARN","true").strip().lower() in {"1","true","yes"}
-        if auto_learn and teacher_configured():
-            try:
-                who=actor(request)
-                candidate=propose_template(
-                    task=f"{classification['task_type']}: {value[:400]}",
-                    inputs={"x":value},
-                    triggers=[value[:48] or str(classification["task_type"])],
-                    source_context=sources,
-                )
-                record=save_candidate(candidate,who)
-                child_id=who if who!="admin" else record["provenance"].get("child_id","admin")
-                submitted=submit_template(HOME_REPO,HOME_BRANCH,child_id,record,os.getenv("LEGEND_GITHUB_TOKEN",""))
-                result["learning"]={"status":"submitted_for_home_verification",
-                                    "template_id":record["id"],"pull_request":submitted["pull_request"]}
-            except Exception as exc:
-                # Learning is opportunistic. Preserve the unknown result for caller fallback.
-                result["learning"]={"status":"unavailable","reason":type(exc).__name__}
-        else:
-            result["learning"]={"status":"teacher_not_configured" if not teacher_configured() else "disabled"}
-    return result
+    value = body.get("x")
+    if not isinstance(value, str) or not value.strip() or len(value) > 12000:
+        raise HTTPException(422, "x must be non-empty text of at most 12000 characters")
+    child_id = actor(request)
+    result = handle_builtin_input(value)
+    index = _home_metadata_index()
+    return {
+        "status": result["status"],
+        "engine": "VORAX",
+        "method": result.get("method"),
+        "answer": result.get("answer"),
+        "artifact_sha256": None,
+        "verification": {
+            **(result.get("verification") or {}),
+            "child_self_certification": False,
+            "home_method_bodies_loaded": False,
+        },
+        "home_index_methods": index.get("methods_total") if index else None,
+        "reason": result.get("reason"),
+        "child_id": child_id,
+    }
