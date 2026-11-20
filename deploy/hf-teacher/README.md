@@ -6,7 +6,7 @@ app_port: 7860
 
 # VORAX Teacher Service
 
-This is a **Docker Space service**, not a model repository.
+This is a **public Docker Space service**, not a model repository. API inference is protected by VORAX Child authentication; the Space stores no credentials in its source tree.
 
 It exposes:
 - `GET /health`
