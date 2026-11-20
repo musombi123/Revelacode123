@@ -10,7 +10,7 @@ This is a **public Docker Space service**, not a model repository. API inference
 
 It exposes:
 - `GET /health`
-- `GET /teacher/discover?query=...` — Hugging Face Hub metadata only (`id`, `tags`, `downloads`, `likes`)
+- `GET /teacher/discover?query=...` — Hugging Face Hub models, Spaces and Datasets plus the Inference Providers router catalogue (metadata only; no repository files or weights)
 - `POST /teacher/ask` — authenticated remote Inference Providers chat completion
 
 ## Weight policy
