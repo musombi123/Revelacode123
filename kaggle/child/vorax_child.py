@@ -344,6 +344,8 @@ def main() -> int:
             "direct_vault_write": False,
             "home_method_bodies_downloaded": False,
             "kaggle_gpu_used": False,
+            "billable_inference_allowed": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"},
+            "free_provider_only": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() not in {"1", "true", "yes"},
         },
         "secret_use": {},
         "failure": None,
