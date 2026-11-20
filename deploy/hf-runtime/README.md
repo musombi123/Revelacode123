@@ -14,12 +14,13 @@ It exposes:
 - `POST /vorax/verify` — trusted V-Lang validation and Runtime-only pending Vault write
 - `POST /vorax/learn` — ask the separate Teacher Service, then validate the returned method
 
-Authentication uses the Kaggle Child identity/key plus server-side GitHub Home and Vault credentials. Requests may pass `child_id` and `api_key` in JSON as documented; `x-child-id` and `x-child-key` headers are preferred.
+Authentication uses the Kaggle Child identity/key plus server-side GitHub Home and Vault credentials. Runtime also requires the private `VORAX_TEACHER_ATTESTATION_KEY` shared with Teacher; Kaggle never receives this signing key. Requests may pass `child_id` and `api_key` in JSON as documented; `x-child-id` and `x-child-key` headers are preferred.
 
 ## Trust boundaries
 
 - The Runtime executes the repository's trusted V-Lang interpreter and reruns every declared test.
 - A Child's claimed verification is never trusted.
+- Runtime verifies the Teacher's HMAC-signed remote response, timestamp, model ID, provider flags and response hash, then checks that the Child's submitted method is exactly the method in that signed response.
 - A passing candidate is stored only under `vlang/pending/` in the existing private Dataset Vault.
 - A Home PR includes the proposed V-Lang method and a metadata-only index update. Only Home validates/merges it.
 - After merge, Runtime may promote the candidate already in Vault pending to `vlang/verified/` when Home's index includes its ID. Runtime never downloads the method body from Home.
