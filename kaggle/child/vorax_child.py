@@ -175,6 +175,8 @@ def main():
         teacher_model = secret("LEGEND_TEACHER_MODEL")
         hf_inference = secret("HF_INFERENCE_TOKEN")
         hf_model_token = secret("HF_MODEL_TOKEN")
+        kaggle_image_model = secret("VORAX_KAGGLE_IMAGE_MODEL")
+        kaggle_image_steps = secret("VORAX_KAGGLE_IMAGE_STEPS")
 
         clone_home(read_token)
         subprocess.run(
@@ -205,6 +207,10 @@ def main():
         if hf_model_token:
             env["HF_MODEL_TOKEN"] = hf_model_token
         env["HF_HOME"] = "/kaggle/working/.cache/huggingface"
+        if kaggle_image_model:
+            env["VORAX_KAGGLE_IMAGE_MODEL"] = kaggle_image_model
+        if kaggle_image_steps:
+            env["VORAX_KAGGLE_IMAGE_STEPS"] = kaggle_image_steps
         if teacher_key and teacher_model:
             env["LEGEND_TEACHER_API_KEY"] = teacher_key
             env["LEGEND_TEACHER_MODEL"] = teacher_model
