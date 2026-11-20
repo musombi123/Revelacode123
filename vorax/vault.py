@@ -274,11 +274,14 @@ def write_pending_method(record: dict, *, child_id: str, verification: dict) -> 
         for item in records:
             if not isinstance(item, dict):
                 continue
-            if (
-                str(item.get("domain", "")).casefold() == record["domain"].casefold()
-                and str(item.get("task", "")).casefold() == record["task"].casefold()
-            ):
+            item_domain = str(item.get("domain", "")).casefold()
+            record_domain = record["domain"].casefold()
+            if item_domain == record_domain and str(item.get("task", "")).casefold() == record["task"].casefold():
                 raise VaultError("An equivalent V-Lang task is already pending in the Vault")
+            item_triggers = {str(value).casefold() for value in item.get("triggers", [])}
+            record_triggers = {str(value).casefold() for value in record["triggers"]}
+            if item_domain == record_domain and item_triggers.intersection(record_triggers):
+                raise VaultError("An equivalent V-Lang trigger is already pending in the Vault")
     entry = {
         "id": method_id,
         "domain": record["domain"],
@@ -416,6 +419,10 @@ def promote_pending_home_methods(home_index: dict) -> dict:
             )
         canonical = dump_record(candidate).encode("utf-8")
         canonical_sha = hashlib.sha256(canonical).hexdigest()
+        if home_summary.get("method_sha256") != canonical_sha:
+            raise VaultError(
+                f"Pending method {method_id} checksum does not match Home's merged method metadata"
+            )
         if hashlib.sha256(raw).hexdigest() != canonical_sha or entry.get("sha256") != canonical_sha:
             raise VaultError(f"Pending method checksum changed for {method_id}")
         target = f"vlang/verified/{method_id}.vlang"
@@ -455,6 +462,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
                 "domain": home_summary["domain"],
                 "task": home_summary["task"],
                 "triggers": home_summary["triggers"],
+                "method_sha256": home_summary["method_sha256"],
             }
             report["promoted_at"] = promoted_at
             report_raw = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
