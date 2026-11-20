@@ -281,7 +281,7 @@ def main() -> int:
         legacy_teacher_base = kaggle_secret("LEGEND_TEACHER_BASE_URL")
 
         report["secret_use"] = {
-            "VORAX_HOME_READ_TOKEN": {"available": True, "used_for": "metadata_index_only"},
+            "VORAX_HOME_READ_TOKEN": {"available": True, "used_for": "direct_metadata_index_read_only"},
             "VORAX_HOME_WRITE_TOKEN": {"available": bool(home_write), "used": False,
                                        "note": "Runtime owns GitHub proposal submission"},
             "VORAX_KAGGLE_CHILD_API_KEY": {"available": True, "used_for": "Teacher_and_Runtime_auth"},
@@ -305,14 +305,10 @@ def main() -> int:
         report["runtime"]["live"] = True
         report["runtime"]["health"] = runtime_health
 
-        _, home_index = request_json(
-            RUNTIME_URL,
-            "/vorax/home-index",
-            child_key=child_key,
-        )
+        home_index = read_home_metadata_index(home_read)
         report["home"]["index_methods"] = home_index.get("methods_total")
-        if home_index.get("method_bodies_included") is not False:
-            raise ConnectorError("Runtime did not return a metadata-only Home index")
+        report["home"]["index_content"] = "metadata_only"
+        report["home"]["method_bodies_downloaded"] = False
 
         query = args.discovery_query.strip() or args.task.strip()
         discovery = discover_world(query, page_limit=5)
