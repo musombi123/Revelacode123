@@ -162,13 +162,17 @@ def main():
         read_token = secret("VORAX_HOME_READ_TOKEN", required=True)
         queue_token = secret("VORAX_HOME_WRITE_TOKEN", required=True)
         child_key = secret("VORAX_KAGGLE_CHILD_API_KEY", required=True)
-        proposal_token = secret("VORAX_CHILD_PROPOSAL_TOKEN")
+        proposal_token = secret("VORAX_CHILD_PROPOSAL_TOKEN") or queue_token
         hf_vault = secret("HF_VAULT_TOKEN")
         teacher_key = secret("LEGEND_TEACHER_API_KEY")
         teacher_model = secret("LEGEND_TEACHER_MODEL")
         hf_inference = secret("HF_INFERENCE_TOKEN")
 
         clone_home(read_token)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", str(ROOT / "requirements.txt")],
+            check=True, timeout=600,
+        )
         env = os.environ.copy()
         env.update({
             "PYTHONPATH": str(ROOT),
