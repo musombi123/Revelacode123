@@ -5,6 +5,7 @@ import base64,json,os,re,sys,urllib.parse,urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from vorax.vlang import parse_document,fingerprint
+from vorax.home_index import build_method_index,parse_method_index
 
 repo=os.environ["GITHUB_REPOSITORY"]; number=os.environ["PR_NUMBER"]; token=os.environ["GITHUB_TOKEN"]
 api="https://api.github.com"
@@ -64,9 +65,16 @@ for run in own:
 if failures>=100: reject("child has 100 consecutive failed Home validations")
 
 changed=get(f"/repos/{repo}/pulls/{number}/files?per_page=100")
-if not changed or len(changed)>5: reject("a child may submit 1–5 templates per pull request")
+if not changed or len(changed)>6: reject("a child proposal must contain 1–5 V-Lang methods and one Home metadata index update")
+index_changes=[item for item in changed if item.get("filename")=="templates/library/index.json"]
+proposal_files=[item for item in changed if item.get("filename","").startswith("templates/library/children/")]
+if len(index_changes)!=1 or index_changes[0].get("status")!="modified":
+    reject("every Child method proposal must update the metadata-only Home index")
+if not 1<=len(proposal_files)<=5 or len(changed)!=len(proposal_files)+1:
+    reject("a child proposal may only contain 1–5 V-Lang files plus templates/library/index.json")
+
 proposals=[]
-for item in changed:
+for item in proposal_files:
     path=item["filename"]
     if not path.startswith("templates/library/children/") or not path.endswith((".vlang",".tlang")):
         reject("template PRs may only add files under templates/library/children/")
@@ -81,19 +89,19 @@ for item in changed:
     if not child or child!=branch_child: reject("V-Lang child identity does not match its branch")
     if t["provenance"].get("kind")!="teacher": reject("child submissions must identify a teacher-derived proposal")
     slug=re.sub(r"[^a-z0-9_-]+","_",t["id"].lower()).strip("_")
-    extension=".vlang" if path.endswith(".vlang") else ".tlang"
-    expected=f"templates/library/children/{child}_{slug}{extension}"
+    expected=f"templates/library/children/{child}_{slug}.vlang"
     if path!=expected: reject("filename must be canonical for child ID and template ID")
     proposals.append(t)
 
 tree=get(f"/repos/{repo}/git/trees/{pr['base']['sha']}?recursive=1")
 if tree.get("truncated"): reject("Home tree is truncated; refusing partial duplicate check")
-existing_ids=set(); existing_fps=set(); existing_tasks=set()
+existing_ids=set(); existing_fps=set(); existing_tasks=set(); existing_records=[]
 for node in tree.get("tree",[]):
     path=node.get("path","")
     if node.get("type")!="blob" or not path.startswith("templates/library/") or not path.endswith((".vlang",".tlang")): continue
     blob=get(f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={pr['base']['sha']}")
     for old in parse_document(base64.b64decode(blob["content"]).decode("utf-8")):
+        existing_records.append(old)
         existing_ids.add(old["id"]); existing_fps.add(fingerprint(old))
         existing_tasks.add((old["domain"].casefold(),old["task"].casefold()))
 for t in proposals:
@@ -102,4 +110,17 @@ for t in proposals:
     key=(t["domain"].casefold(),t["task"].casefold())
     if key in existing_tasks: reject("duplicate task/domain: "+t["id"])
     existing_ids.add(t["id"]); existing_fps.add(fingerprint(t)); existing_tasks.add(key)
+    existing_records.append(t)
+
+# Home verifies the index from trusted base methods plus the Child's proposed methods.
+expected_index=build_method_index(existing_records)
+index_blob=get(f"/repos/{repo}/contents/templates/library/index.json?ref={pr['head']['sha']}")
+try:
+    submitted_index=parse_method_index(base64.b64decode(index_blob["content"]).decode("utf-8"))
+except Exception as exc:
+    reject("Home metadata index is invalid: "+str(exc)[:180])
+if submitted_index!=expected_index:
+    reject("Home metadata index is not the exact metadata-only summary of Home plus proposed methods")
+
+
 print(f"PASS: {len(proposals)} child template(s): structure, safety, duplicate checks, and executable tests")
