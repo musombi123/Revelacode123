@@ -329,6 +329,95 @@ def mark_pending_home_submission(method_id: str, pull_request: str) -> dict:
             "Update VORAX Vault SHA-256 checksums")
     return {"status": "submitted_for_home_review", "home_pr": pull_request}
 
+
+def promote_pending_home_methods(home_index: dict) -> dict:
+    """Promote pending methods only when Home's metadata index confirms the merged method ID.
+
+    The Runtime reads the V-Lang candidate from the Vault itself. It never fetches a
+    method body from GitHub Home. Home contributes only its metadata-only index.
+    """
+    from .home_index import parse_method_index
+    from .vlang import dump_record, parse_document
+
+    try:
+        trusted_index = parse_method_index(json.dumps(home_index))
+    except Exception as exc:
+        raise VaultError("Home metadata index failed validation; no pending method was promoted") from exc
+
+    api, repo = _client()
+    pending = _read_json(api, repo, "vlang/pending/index.json", {"version": "vlang-index/1", "records": []})
+    verified = _read_json(api, repo, "vlang/index.json", {"version": "vlang-index/1", "records": []})
+    checksums_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    pending_records = pending.get("records", [])
+    verified_records = verified.get("records", [])
+    checksums = checksums_doc.get("files", {})
+    if not all(isinstance(x, list) for x in (pending_records, verified_records)) or not isinstance(checksums, dict):
+        raise VaultError("Vault indexes or checksum manifest are malformed")
+
+    home_ids = {item["id"] for item in trusted_index["records"]}
+    promoted = []
+    for entry in pending_records:
+        if not isinstance(entry, dict) or entry.get("id") not in home_ids:
+            continue
+        method_id = entry["id"]
+        pending_path = entry.get("path") or f"vlang/pending/{method_id}.vlang"
+        raw = _read_file(api, repo, pending_path)
+        try:
+            records = parse_document(raw.decode("utf-8"))
+        except Exception as exc:
+            raise VaultError(f"Pending method {method_id} failed trusted V-Lang revalidation") from exc
+        if len(records) != 1 or records[0]["id"] != method_id:
+            raise VaultError(f"Pending Vault path does not contain the indexed method {method_id}")
+        canonical = dump_record(records[0]).encode("utf-8")
+        canonical_sha = hashlib.sha256(canonical).hexdigest()
+        if hashlib.sha256(raw).hexdigest() != canonical_sha or entry.get("sha256") != canonical_sha:
+            raise VaultError(f"Pending method checksum changed for {method_id}")
+        target = f"vlang/verified/{method_id}.vlang"
+        if target in set(api.list_repo_files(repo_id=repo, repo_type="dataset")):
+            existing = _read_file(api, repo, target)
+            if hashlib.sha256(existing).hexdigest() != canonical_sha:
+                raise VaultError(f"Verified Vault method ID conflict for {method_id}")
+        else:
+            _upload(api, repo, target, canonical, "Promote Home-merged V-Lang method from Vault pending")
+        checksums[target] = canonical_sha
+        verified_entry = {
+            "id": method_id,
+            "path": target,
+            "sha256": canonical_sha,
+            "size_bytes": len(canonical),
+            "home_certified": True,
+            "home_pr": entry.get("home_pr"),
+        }
+        existing_entry = next((x for x in verified_records if isinstance(x, dict) and x.get("id") == method_id), None)
+        if existing_entry:
+            existing_entry.update(verified_entry)
+        else:
+            verified_records.append(verified_entry)
+        entry["status"] = "merged_home_and_promoted"
+        entry["home_certification"] = "confirmed_by_home_index"
+        promoted.append(method_id)
+
+    if promoted:
+        verified_records.sort(key=lambda item: item.get("id", ""))
+        verified["records"] = verified_records
+        pending["records"] = pending_records
+        verified_raw = json.dumps(verified, indent=2, ensure_ascii=False).encode("utf-8")
+        pending_raw = json.dumps(pending, indent=2, ensure_ascii=False).encode("utf-8")
+        checksums["vlang/index.json"] = hashlib.sha256(verified_raw).hexdigest()
+        checksums["vlang/pending/index.json"] = hashlib.sha256(pending_raw).hexdigest()
+        _upload(api, repo, "vlang/index.json", verified_raw, "Update Home-confirmed verified V-Lang index")
+        _upload(api, repo, "vlang/pending/index.json", pending_raw, "Update Home-confirmed pending V-Lang index")
+        checksum_raw = json.dumps(checksums_doc, indent=2, sort_keys=True).encode("utf-8")
+        _upload(api, repo, "manifest/checksums.json", checksum_raw, "Update checksums after Home method promotion")
+    return {
+        "status": "promoted" if promoted else "no_home_merged_pending_methods",
+        "promoted_method_ids": promoted,
+        "home_index_methods": len(home_ids),
+        "repo_type": "dataset",
+        "vault_repo": repo,
+    }
+
+
 def mirror_home_and_artifacts(records, artifact_root):
     api, repo = _client()
     from .vlang import dump_record
