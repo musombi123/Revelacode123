@@ -44,6 +44,7 @@ Teacher Space secrets:
 - **VORAX_CHILD_ID=kaggle-child**.
 - **VORAX_KAGGLE_CHILD_API_KEY**.
 - **VORAX_TEACHER_ATTESTATION_KEY** — shared only with Runtime; never place it in Kaggle Secrets.
+- **VORAX_ALLOW_BILLABLE_INFERENCE=false** — default is free-provider-only; Teacher refuses models without a live provider explicitly marked `is_free=true`. Setting this to `true` is an explicit billable-inference opt-in and may incur charges.
 
 The Teacher has no Vault token and no GitHub Home write token.
 
@@ -89,6 +90,7 @@ Runtime Space secrets:
 - **VORAX_TEACHER_URL=https://musombi-vorax-teacher-service.hf.space**.
 - **VORAX_TEACHER_MODEL** — optional default used by /vorax/learn.
 - **VORAX_TEACHER_ATTESTATION_KEY** — the same private HMAC key configured on Teacher; Kaggle must never receive it.
+- **VORAX_ALLOW_BILLABLE_INFERENCE=false** — also controls Runtime's remote artifact-tool adapters; they make no provider calls unless explicitly opted in.
 
 ## 3. Preserve the existing Vault
 
@@ -105,6 +107,8 @@ Required existing index/manifest/report files:
 - **reports/go-no-go/latest.json**
 
 Artifact prefixes remain **artifacts/images/**, **artifacts/audio/**, and **artifacts/video/**. Empty directories may not appear in Hub listings until a file is uploaded. No model weights, model configs or model training checkpoints belong in this Dataset.
+
+Teacher and Kaggle select only live providers whose router metadata explicitly reports `is_free=true` by default. The Runtime's remote artifact-tool adapters are also disabled by default. The optional service setting `VORAX_ALLOW_BILLABLE_INFERENCE=true` explicitly opts those paths into potentially billable provider calls. The deployment script writes this setting as `false` unless the operator explicitly supplies another value. A provider that omits the free-status field is not treated as free.
 
 The Runtime writes a pending method only after trusted V-Lang tests pass. Teacher and Kaggle have no direct Vault write path. When Home's metadata-only index confirms the merged method ID, Runtime rechecks that the method already in Vault pending has the same domain, task and triggers, matches the SHA-256 published in Home's metadata index, and passes the V-Lang tests again, then promotes that Vault-stored method to **vlang/verified/**. Runtime never downloads a Home method body. Media enters the Vault only after real format verification and SHA-256 calculation. Until a real PNG/WAV/MP4 is independently verified, its status remains UNKNOWN.
 
