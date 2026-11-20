@@ -22,6 +22,7 @@ from huggingface_hub import HfApi
 from huggingface_hub.utils import HfHubHTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 OWNER = "Musombi"
 TEACHER_REPO = f"{OWNER}/vorax-teacher-service"
 RUNTIME_REPO = f"{OWNER}/vorax-runtime-service"
@@ -47,10 +48,10 @@ def require_env() -> dict[str, str]:
 
 
 def assert_weight_free(path: Path) -> None:
-    forbidden_suffixes = {".safetensors", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".model"}
+    forbidden_suffixes = {".safetensors", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".model", ".bin", ".h5", ".pb", ".tflite", ".msgpack", ".weights"}
     for item in path.rglob("*"):
         rel = item.relative_to(path).as_posix().lower()
-        if "hf-model/" in rel or rel.endswith("/hf-model"):
+        if "hf-model/" in rel or rel.endswith("/hf-model") or rel == "hf-model":
             raise RuntimeError(f"Forbidden hf-model path in Space package: {rel}")
         if item.is_file() and (item.suffix.lower() in forbidden_suffixes or item.name.lower() == "pytorch_model.bin"):
             raise RuntimeError(f"Forbidden model weight file in Space package: {rel}")
