@@ -354,10 +354,10 @@ def promote_pending_home_methods(home_index: dict) -> dict:
     if not all(isinstance(x, list) for x in (pending_records, verified_records)) or not isinstance(checksums, dict):
         raise VaultError("Vault indexes or checksum manifest are malformed")
 
-    home_ids = {item["id"] for item in trusted_index["records"]}
+    home_by_id = {item["id"]: item for item in trusted_index["records"]}
     promoted = []
     for entry in pending_records:
-        if not isinstance(entry, dict) or entry.get("id") not in home_ids:
+        if not isinstance(entry, dict) or entry.get("id") not in home_by_id:
             continue
         method_id = entry["id"]
         pending_path = entry.get("path") or f"vlang/pending/{method_id}.vlang"
@@ -368,7 +368,17 @@ def promote_pending_home_methods(home_index: dict) -> dict:
             raise VaultError(f"Pending method {method_id} failed trusted V-Lang revalidation") from exc
         if len(records) != 1 or records[0]["id"] != method_id:
             raise VaultError(f"Pending Vault path does not contain the indexed method {method_id}")
-        canonical = dump_record(records[0]).encode("utf-8")
+        candidate = records[0]
+        home_summary = home_by_id[method_id]
+        if (
+            candidate["domain"] != home_summary["domain"]
+            or candidate["task"] != home_summary["task"]
+            or candidate["triggers"] != home_summary["triggers"]
+        ):
+            raise VaultError(
+                f"Pending method {method_id} does not match Home's merged metadata summary"
+            )
+        canonical = dump_record(candidate).encode("utf-8")
         canonical_sha = hashlib.sha256(canonical).hexdigest()
         if hashlib.sha256(raw).hexdigest() != canonical_sha or entry.get("sha256") != canonical_sha:
             raise VaultError(f"Pending method checksum changed for {method_id}")
@@ -412,7 +422,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
     return {
         "status": "promoted" if promoted else "no_home_merged_pending_methods",
         "promoted_method_ids": promoted,
-        "home_index_methods": len(home_ids),
+        "home_index_methods": len(home_by_id),
         "repo_type": "dataset",
         "vault_repo": repo,
     }
