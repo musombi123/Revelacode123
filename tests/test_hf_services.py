@@ -16,10 +16,12 @@ class TeacherServiceTests(unittest.TestCase):
              "modelId": "ignored", "sha": "ignored"},
         ]
         with patch.object(hf_teacher, "_http_json", return_value=(metadata, {})) as call:
-            result = hf_teacher.discover(query="example", limit=3)
+            result = hf_teacher.discover(query="example", limit=3, source="models")
         self.assertEqual(result["status"], "metadata_only")
         self.assertEqual(result["models"], [{
-            "id": "acme/example", "tags": ["text-generation"], "downloads": 123, "likes": 7,
+            "id": "acme/example", "source_type": "model", "tags": ["text-generation"],
+            "description": "", "downloads": 123, "likes": 7,
+            "pipeline_tag": None, "library_name": None, "sdk": None,
         }])
         self.assertIs(result["weights_downloaded"], False)
         self.assertNotIn("files", result["models"][0])
@@ -59,26 +61,22 @@ class TeacherServiceTests(unittest.TestCase):
 
 
 class RuntimeServiceTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        hf_runtime._seed_store()
-
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime"}), \
              patch.object(hf_runtime, "CHILD_ID", "kaggle-child"), \
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
              patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
              patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
-             patch.object(hf_runtime, "_refresh_home", return_value={"status": "synced"}):
+             patch.object(hf_runtime, "_refresh_home_index", return_value=(None, {"status": "metadata_index_read", "methods_total": 30})):
             result = hf_runtime.input_x(
                 {"x": "hello, who are you", "child_id": "kaggle-child", "api_key": "child-test-key"},
                 None,
                 None,
             )
             self.assertEqual(result["status"], "verified")
-            self.assertEqual(result["method"], "greeting.identity")
+            self.assertEqual(result["method"], "runtime.identity")
             self.assertIsNone(result["artifact_sha256"])
-            self.assertEqual(result["verification"]["authority"], "shared_vorax_runtime")
+            self.assertEqual(result["verification"]["authority"], "trusted_vlang_interpreter")
 
     def test_input_x_rejects_unauthenticated_child(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime"}), \
@@ -112,6 +110,9 @@ class RuntimeServiceTests(unittest.TestCase):
                  "number": 999, "branch": "child/kaggle-child/test",
              }), \
              patch.object(hf_runtime, "mark_pending_home_submission"), \
+             patch.object(hf_runtime, "_refresh_home_index", return_value=({
+                 "version": "vorax-home-method-index/v1", "methods_total": 30, "records": [],
+             }, {"status": "metadata_index_read", "methods_total": 30})), \
              patch.object(hf_runtime.STORE, "add", side_effect=AssertionError("pending must not enter executable catalogue")), \
              patch.object(hf_runtime.STORE, "record_success"):
             result = hf_runtime._verify_and_submit(candidate, "kaggle-child", "acme/example", "reverse text")
