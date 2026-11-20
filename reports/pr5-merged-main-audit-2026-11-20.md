@@ -152,3 +152,19 @@ The final recorded PR #7 head in this work session is `ac5064e7c8aeeec7c8414cfc1
 - `44716354751` pull_request_target / job `136220642083` / `runner_id=0` / no steps
 
 The exact-head CI state remains blocked by runner allocation. No code-level pass/fail conclusion can be drawn from those runs.
+
+
+## Kaggle CLI authentication update — 2026-11-20
+
+Kaggle's current CLI supports personal API-token authentication through `KAGGLE_API_TOKEN`; current CLI reference documents `KAGGLE_API_TOKEN`, `~/.kaggle/access_token`, and legacy username/key authentication. Kaggle's v1.8.0 announcement introduces support for multiple account API tokens. The Phase 1 workflows were updated to install `kaggle>=1.8.0` and read the GitHub Actions secret `KAGGLE_API_TOKEN`; `scripts/vorax_controller.py` accepts this token and retains legacy `KAGGLE_KEY` compatibility. A dedicated unit-test file covers current token auth, legacy compatibility and missing credentials. No personal API-token value is stored in Git.
+
+Official references:
+- `https://github.com/Kaggle/kaggle-cli/blob/main/skills/references/auth.md`
+- `https://www.kaggle.com/product-announcements/639232`
+- `https://github.com/Kaggle/kaggle-cli/blob/main/docs/README.md`
+
+Do not confuse the Kaggle account's own API tokens with the VORAX Notebook secrets:
+- GitHub Actions `KAGGLE_API_TOKEN`: the value of one Kaggle Account API Token; this authenticates the GitHub-hosted workflow to Kaggle.
+- Kaggle Notebook `VORAX_HOME_READ_TOKEN` / `VORAX_HOME_WRITE_TOKEN`: GitHub credentials for private Home access and queue/proposal operations, not Kaggle API credentials.
+- Kaggle Notebook `VORAX_KAGGLE_CHILD_API_KEY`: a separately generated random VORAX shared secret, not a Kaggle Account API token.
+- Kaggle Notebook `HF_VAULT_TOKEN`: Hugging Face write token for the private Dataset Vault.
