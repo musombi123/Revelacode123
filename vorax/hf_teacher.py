@@ -141,18 +141,17 @@ def _metadata_item(item: dict, source_type: str) -> dict | None:
 def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None):
     if kind not in {"models", "spaces", "datasets"}:
         raise HTTPException(422, "source must be models, spaces, datasets, or all")
-    params = [
-        ("limit", str(limit)),
-        ("sort", "downloads"),
-        ("direction", "-1"),
-    ]
+    params = [("limit", str(limit))]
     if query.strip():
         params.append(("search", query.strip()))
     if cursor:
         params.append(("cursor", cursor))
     if kind == "models":
-        # Keep the complete Hub catalogue; provider availability is returned as metadata.
+        # Search all models exposed by at least one remote Inference Provider.
         params.extend([
+            ("inference_provider", "all"),
+            ("sort", "downloads"),
+            ("direction", "-1"),
             ("expand[]", "tags"),
             ("expand[]", "downloads"),
             ("expand[]", "likes"),
