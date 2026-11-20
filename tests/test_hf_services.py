@@ -111,7 +111,12 @@ class RuntimeServiceTests(unittest.TestCase):
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
              patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
              patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
-             patch.object(hf_runtime, "_refresh_home_index", return_value=(None, {"status": "metadata_index_read", "methods_total": 30})):
+             patch.object(hf_runtime, "_refresh_home_index", return_value=({
+                 "version": "vorax-home-method-index/v1", "methods_total": 30, "records": [],
+             }, {"status": "metadata_index_read", "methods_total": 30})), \
+             patch.object(hf_runtime, "_reconcile_home_methods", return_value={
+                 "status": "no_home_merged_pending_methods", "methods_loaded_into_runtime": 0,
+             }):
             result = hf_runtime.input_x(
                 {"x": "hello, who are you", "child_id": "kaggle-child", "api_key": "child-test-key"},
                 None,
@@ -247,8 +252,8 @@ class RuntimeServiceTests(unittest.TestCase):
             ],
             "provenance": {"kind": "teacher", "teacher": "test-teacher"},
         }
-        with patch.object(hf_runtime, "promote_pending_home_methods", return_value={
-                 "status": "no_home_merged_pending_methods", "promoted_method_ids": [],
+        with patch.object(hf_runtime, "_reconcile_home_methods", return_value={
+                 "status": "no_home_merged_pending_methods", "methods_loaded_into_runtime": 0,
              }), \
              patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \
              patch.object(hf_runtime, "write_pending_method", return_value={"status": "written_pending"}), \
