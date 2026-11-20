@@ -147,6 +147,37 @@ class RuntimeServiceTests(unittest.TestCase):
                 hf_runtime._verify_teacher_attestation(response + " altered", attestation, "acme/example")
         self.assertEqual(caught.exception.status_code, 403)
 
+
+    def test_runtime_rejects_a_method_different_from_teacher_signed_response(self):
+        candidate = {
+            "version": "vlang/1",
+            "id": "learned.actual_method",
+            "domain": "text",
+            "task": "return supplied text unchanged",
+            "triggers": ["return text unchanged", "identity text procedure"],
+            "inputs": {"value": "string"},
+            "steps": [{"op": "identity", "args": [{"input": "value"}], "as": "answer"}],
+            "result": {"step": "answer"},
+            "tests": [
+                {"input": {"value": "one"}, "expect": "one"},
+                {"input": {"value": "two"}, "expect": "two"},
+            ],
+            "provenance": {"kind": "teacher", "teacher": "acme/example"},
+        }
+        teacher_response = json.dumps(candidate)
+        attestation = self._signed_teacher_receipt(teacher_response)
+        altered = dict(candidate)
+        altered["task"] = "claim a completely different method"
+        with patch.dict(os.environ, {"VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}):
+            with self.assertRaises(HTTPException) as caught:
+                hf_runtime._validate_teacher_candidate(
+                    teacher_response,
+                    attestation,
+                    altered,
+                    "acme/example",
+                )
+        self.assertEqual(caught.exception.status_code, 403)
+
     def test_runtime_rejects_teacher_attestation_when_kaggle_gpu_is_claimed(self):
         response = "signed teacher response"
         attestation = self._signed_teacher_receipt(response)
