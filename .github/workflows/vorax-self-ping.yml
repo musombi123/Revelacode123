@@ -61,6 +61,7 @@ jobs:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           KAGGLE_KERNEL: ${{ secrets.KAGGLE_USERNAME }}/${{ vars.KAGGLE_KERNEL_SLUG }}
+          KAGGLE_KERNEL_SLUG: ${{ vars.KAGGLE_KERNEL_SLUG }}
           KAGGLE_ACCELERATOR: ${{ vars.KAGGLE_ACCELERATOR || 'NvidiaTeslaT4' }}
           KAGGLE_TIMEOUT_SECONDS: '42000'
           VORAX_CONTROLLER_REPORT: controller-report.jsonl
