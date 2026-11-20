@@ -353,13 +353,22 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
             "pull_request": submitted["pull_request"],
             "number": submitted["number"],
             "branch": submitted["branch"],
+            "vault_tracking": "pending",
         }
-        mark_pending_home_submission(record["id"], submitted["pull_request"])
     except Exception as exc:
         home_submission = {
             "status": "pending_retry",
             "reason": type(exc).__name__,
         }
+    else:
+        # Preserve the already-created Home PR receipt if the separate Vault
+        # bookkeeping update has a transient failure.
+        try:
+            mark_pending_home_submission(record["id"], submitted["pull_request"])
+            home_submission["vault_tracking"] = "linked_to_home_pr"
+        except Exception as exc:
+            home_submission["vault_tracking"] = "update_failed"
+            home_submission["vault_tracking_error"] = type(exc).__name__
 
     STORE.record_success(child_id)
     _log(
