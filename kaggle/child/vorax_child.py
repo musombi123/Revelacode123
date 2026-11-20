@@ -468,6 +468,8 @@ def main() -> int:
                     method="POST",
                     payload={
                         "method": candidate,
+                        "teacher_response": final_response["response"],
+                        "teacher_attestation": final_response["attestation"],
                         "x": user_x,
                         "teacher_model_id": final_model,
                         "child_id": CHILD_ID,
