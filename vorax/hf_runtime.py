@@ -476,6 +476,8 @@ def health():
         "vault": vault,
         "required_secrets": required,
         "ready": all(required.values()) and home_index is not None and vault.get("status") == "verified",
+        "billable_inference_allowed": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"},
+        "free_provider_only": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() not in {"1", "true", "yes"},
         "weights_downloaded": False,
         "local_model_loaded": False,
     }
