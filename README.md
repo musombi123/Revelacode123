@@ -29,6 +29,8 @@ The controller cron is `17,47 * * * *`. It does not run VORAX itself. It probes 
 - **This adapter is not yet live-proven.** It has not been run in a real Kaggle GPU session in this repository workflow; no PNG is claimed, and the Children are not certified live. Its first successful execution must produce a non-blank PNG, independently re-hash it in the worker, and appear in the Vault sync proof at `artifacts/images/<sha256>.png`.
 - Local GPU adapters for audio, music and video remain unimplemented and must stay `blocked_local_gpu_adapter` / `UNKNOWN`. 3D remains `UNKNOWN`. The existing default Hugging Face Inference adapters are remote services and their GPU device is not exposed to this runtime; a remote result can never be labelled Kaggle GPU execution.
 
+The default image model is `stable-diffusion-v1-5/stable-diffusion-v1-5` on Hugging Face. Its model card identifies the CreativeML OpenRAIL-M license and describes research-oriented use and exclusions. Review the current model card and license before using this checkpoint in a commercial production service: https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5
+
 Do not put passwords, API keys, private records or sensitive personal data in the GitHub X queue. The queue is stored as an issue in this private repository.
 
 ## Home trust and auto-merge policy
