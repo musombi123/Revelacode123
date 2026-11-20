@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
 import os
 import subprocess
 import sys
@@ -172,6 +174,7 @@ def main():
         teacher_key = secret("LEGEND_TEACHER_API_KEY")
         teacher_model = secret("LEGEND_TEACHER_MODEL")
         hf_inference = secret("HF_INFERENCE_TOKEN")
+        hf_model_token = secret("HF_MODEL_TOKEN")
 
         clone_home(read_token)
         subprocess.run(
@@ -199,6 +202,9 @@ def main():
             env["HF_VAULT_TOKEN"] = hf_vault
         if hf_inference:
             env["HF_INFERENCE_TOKEN"] = hf_inference
+        if hf_model_token:
+            env["HF_MODEL_TOKEN"] = hf_model_token
+        env["HF_HOME"] = "/kaggle/working/.cache/huggingface"
         if teacher_key and teacher_model:
             env["LEGEND_TEACHER_API_KEY"] = teacher_key
             env["LEGEND_TEACHER_MODEL"] = teacher_model
@@ -220,6 +226,8 @@ def main():
 
         from vorax.api import STORE, classify_input_x
 
+        pending_updates = []
+        gpu_packages_installed = False
         for issue, queued in queue_issues(queue_token):
             value = str(queued.get("x", "")).strip()
             task = {
@@ -227,35 +235,110 @@ def main():
                 "x": value,
                 "method": None,
                 "verification": "not_executed",
+                "provider": None,
                 "pr": None,
                 "artifacts": [],
                 "failure": None,
             }
+            queue_status = "worker_error_retry_later"
             try:
                 if not value or len(value) > 12000:
                     raise ValueError("Queued X is invalid or exceeds the bounded input size")
                 classification = classify_input_x(value, STORE.all())
                 task["method"] = classification.get("task_type")
-                if task["method"] in HEAVY:
-                    modality = (
-                        "image" if task["method"] in {"image", "logo"} else
-                        "audio" if task["method"] in {"speech", "audio"} else
-                        "text" if task["method"] == "3d" else
-                        task["method"]
-                    )
-                    metadata = request_json("POST", "/v1/devour/discover", child_key,
-                                             {"modality": modality, "limit": 10})
-                    task["verification"] = "metadata_only_not_media_execution"
-                    task["gpu_telemetry_available"] = report["gpu_telemetry"]["available"]
-                    task["failure"] = (
-                        "Local GPU inference adapter for this modality is not yet installed. "
-                        "Model metadata was discovered only; no PNG/WAV/MP4 was generated."
-                    )
-                    task["models_found"] = metadata.get("models_found", 0)
-                    update_queue(issue, queued, queue_token, "blocked_local_gpu_adapter", task)
+
+                if task["method"] == "3d":
+                    task["verification"] = "unknown"
+                    task["failure"] = "3D generation has no verified local adapter. No 3D artifact was produced."
+                    queue_status = "unknown_3d_adapter_not_implemented"
+
+                elif task["method"] in HEAVY:
+                    if task["method"] in {"image", "logo"} and not gpu_packages_installed:
+                        gpu_requirements = ROOT / "kaggle" / "child" / "requirements-gpu.txt"
+                        subprocess.run(
+                            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+                             "--no-cache-dir", "-r", str(gpu_requirements)],
+                            check=True, timeout=900,
+                        )
+                        gpu_packages_installed = True
+
+                    result = request_json("POST", "/vorax/x", child_key, {"x": value})
+                    answer = result.get("answer") if isinstance(result, dict) else None
+                    task["result_status"] = result.get("status") if isinstance(result, dict) else "invalid_response"
+
+                    if (
+                        isinstance(answer, dict)
+                        and answer.get("status") == "verified"
+                        and answer.get("provider") == "kaggle-local-diffusers"
+                        and isinstance(answer.get("gpu_telemetry"), dict)
+                        and answer["gpu_telemetry"].get("gpu_used") is True
+                    ):
+                        artifact_id = answer.get("artifact")
+                        if not isinstance(artifact_id, str) or not re.fullmatch(r"[a-f0-9]{32}\\.png", artifact_id):
+                            raise RuntimeError("Kaggle GPU returned an invalid artifact identifier")
+                        artifact_root = Path(env["LEGEND_ARTIFACT_DIR"]).resolve()
+                        artifact_path = (artifact_root / artifact_id).resolve()
+                        if artifact_root not in artifact_path.parents or not artifact_path.is_file():
+                            raise RuntimeError("Kaggle GPU artifact is missing or outside the artifact root")
+                        from PIL import Image, ImageStat
+                        with Image.open(artifact_path) as image:
+                            image.verify()
+                        with Image.open(artifact_path) as image:
+                            image.load()
+                            if image.format != "PNG":
+                                raise RuntimeError("Generated artifact is not a PNG")
+                            extrema = ImageStat.Stat(image.convert("RGB")).extrema
+                            if all(low == high for low, high in extrema):
+                                raise RuntimeError("Generated PNG is blank")
+                            dimensions = {"width": image.width, "height": image.height}
+                        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+                        size = artifact_path.stat().st_size
+                        if answer.get("sha256") != digest or answer.get("size_bytes") != size:
+                            raise RuntimeError("Independent artifact hash or byte-size check did not match the runtime report")
+                        telemetry = answer["gpu_telemetry"]
+                        if not str(telemetry.get("device", "")).startswith("cuda:"):
+                            raise RuntimeError("The reported model device is not CUDA")
+                        if not telemetry.get("gpu_name"):
+                            raise RuntimeError("The actual CUDA GPU name was not recorded")
+
+                        task.update({
+                            "verification": "local_png_verified_pending_vault",
+                            "provider": "kaggle-local-diffusers",
+                            "model_id": answer.get("model_id"),
+                            "gpu_telemetry": telemetry,
+                            "execution_time_ms": answer.get("elapsed_ms"),
+                            "artifact": {
+                                "filename": artifact_id,
+                                "local_path": str(artifact_path),
+                                "format": "png",
+                                "size_bytes": size,
+                                "sha256": digest,
+                                **dimensions,
+                                "independent_verification": "passed",
+                            },
+                        })
+                        queue_status = "verified_local_artifact_pending_vault"
+
+                    else:
+                        reason = (
+                            answer.get("reason") if isinstance(answer, dict)
+                            else result.get("reason") or result.get("message") if isinstance(result, dict)
+                            else "No verified local Kaggle image result was returned"
+                        )
+                        task["verification"] = "blocked_or_unknown_no_artifact"
+                        task["failure"] = str(reason or "Local Kaggle modality adapter unavailable")[:500]
+                        task["provider"] = answer.get("provider") if isinstance(answer, dict) else None
+                        if task["method"] == "image" or task["method"] == "logo":
+                            queue_status = "blocked_local_gpu_adapter"
+                        else:
+                            queue_status = "unknown_local_adapter_not_implemented"
+
                 else:
                     result = request_json("POST", "/vorax/x", child_key, {"x": value})
-                    task["verification"] = "shared_runtime_response_received_not_home_merged"
+                    task["verification"] = (
+                        "shared_runtime_response_received_not_home_merged"
+                        if result.get("status") == "verified" else "unknown"
+                    )
                     task["result_status"] = result.get("status")
                     task["result_summary"] = {
                         key: result.get(key) for key in ("template_id", "learning", "discovery")
@@ -263,15 +346,16 @@ def main():
                     }
                     learning = result.get("learning") or {}
                     task["pr"] = learning.get("pull_request") or learning.get("pr")
-                    update_queue(issue, queued, queue_token, "processed_pending_home_validation", task)
+                    queue_status = "processed_pending_home_validation" if result.get("status") == "verified" else "unknown_no_verified_method"
+
                 report["tasks"].append(task)
+                pending_updates.append((issue, queued, queue_status, task))
+
             except Exception as exc:
-                task["failure"] = type(exc).__name__ + ": " + str(exc)[:180]
+                task["failure"] = type(exc).__name__ + ": " + str(exc)[:300]
+                task["verification"] = "failed"
                 report["tasks"].append(task)
-                try:
-                    update_queue(issue, queued, queue_token, "worker_error_retry_later", task)
-                except Exception:
-                    pass
+                pending_updates.append((issue, queued, "worker_error_retry_later", task))
 
         if hf_vault:
             try:
@@ -280,6 +364,33 @@ def main():
                 report["vault_sync"] = {"status": "failed", "failure": type(exc).__name__}
         else:
             report["vault_sync"] = {"status": "not_configured", "verification": "not_synced"}
+
+        vault_proofs = (
+            report.get("vault_sync", {}).get("artifact_proofs", [])
+            if isinstance(report.get("vault_sync"), dict) else []
+        )
+        for issue, queued, queue_status, task in pending_updates:
+            artifact = task.get("artifact")
+            if artifact and queue_status == "verified_local_artifact_pending_vault":
+                proof = next(
+                    (item for item in vault_proofs if item.get("sha256") == artifact["sha256"]),
+                    None,
+                )
+                if proof and proof.get("path") == "artifacts/images/" + artifact["sha256"] + ".png":
+                    artifact["vault_path"] = proof["path"]
+                    task["verification"] = "png_verified_and_vaulted"
+                    queue_status = "verified_artifact_vaulted"
+                else:
+                    task["verification"] = (
+                        "png_verified_vault_sync_failed"
+                        if report.get("vault_sync", {}).get("status") == "failed"
+                        else "png_verified_but_vault_proof_missing"
+                    )
+                    queue_status = "verified_local_artifact_not_vaulted"
+            try:
+                update_queue(issue, queued, queue_token, queue_status, task)
+            except Exception as exc:
+                task["queue_update_failure"] = type(exc).__name__ + ": " + str(exc)[:180]
 
     except Exception as exc:
         report["failure"] = type(exc).__name__ + ": " + str(exc)[:250]
