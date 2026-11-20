@@ -1,0 +1,118 @@
+name: Deploy VORAX Koyeb Lightweight Child
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require Koyeb and GitHub Home credentials
+        env:
+          KOYEB_API_TOKEN: ${{ secrets.KOYEB_API_TOKEN }}
+          VORAX_CHILD_API_KEY: ${{ secrets.VORAX_KOYEB_CHILD_API_KEY }}
+          LEGEND_HOME_READ_TOKEN: ${{ secrets.VORAX_HOME_READ_TOKEN }}
+          LEGEND_GITHUB_TOKEN: ${{ secrets.VORAX_HOME_WRITE_TOKEN }}
+        run: |
+          test -n "$KOYEB_API_TOKEN" || { echo 'Missing KOYEB_API_TOKEN'; exit 1; }
+          test -n "$VORAX_CHILD_API_KEY" || { echo 'Missing VORAX_KOYEB_CHILD_API_KEY'; exit 1; }
+          test -n "$LEGEND_HOME_READ_TOKEN" || { echo 'Missing VORAX_HOME_READ_TOKEN'; exit 1; }
+          test -n "$LEGEND_GITHUB_TOKEN" || { echo 'Missing VORAX_HOME_WRITE_TOKEN'; exit 1; }
+
+      - name: Install and configure Koyeb CLI
+        uses: koyeb-community/koyeb-actions@v2
+        with:
+          api_token: ${{ secrets.KOYEB_API_TOKEN }}
+
+      - name: Create Koyeb runtime secrets
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: VORAX_CHILD_API_KEY
+          secret-value: ${{ secrets.VORAX_KOYEB_CHILD_API_KEY }}
+
+      - name: Store Home read credential in Koyeb
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: LEGEND_HOME_READ_TOKEN
+          secret-value: ${{ secrets.VORAX_HOME_READ_TOKEN }}
+
+      - name: Store Home queue and proposal credential in Koyeb
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: LEGEND_GITHUB_TOKEN
+          secret-value: ${{ secrets.VORAX_HOME_WRITE_TOKEN }}
+
+      - name: Detect optional Vault, inference, and teacher credentials
+        id: optional
+        env:
+          HF_VAULT_TOKEN_VALUE: ${{ secrets.HF_VAULT_TOKEN }}
+          HF_INFERENCE_TOKEN_VALUE: ${{ secrets.HF_INFERENCE_TOKEN }}
+          LEGEND_TEACHER_API_KEY_VALUE: ${{ secrets.LEGEND_TEACHER_API_KEY }}
+          LEGEND_TEACHER_MODEL_VALUE: ${{ vars.LEGEND_TEACHER_MODEL }}
+          LEGEND_TEACHER_BASE_URL_VALUE: ${{ vars.LEGEND_TEACHER_BASE_URL }}
+        run: |
+          SERVICE_ENV='PORT=8000,VORAX_CHILD_ID=koyeb-child,VORAX_CHILD_ROLE=koyeb,VORAX_AUTO_LEARN=true,LEGEND_HOME_REPO=musombi123/Revelacode123,LEGEND_HOME_BRANCH=main,LEGEND_DB_PATH=/tmp/vorax.sqlite3,LEGEND_ARTIFACT_DIR=/tmp/vorax-artifacts,LEGEND_HOME_READ_TOKEN=@LEGEND_HOME_READ_TOKEN,LEGEND_GITHUB_TOKEN=@LEGEND_GITHUB_TOKEN,VORAX_CHILD_API_KEY=@VORAX_CHILD_API_KEY,HF_VAULT_REPO=Musombi/revelacode-vorax-vault'
+          if [ -n "$HF_VAULT_TOKEN_VALUE" ]; then
+            echo 'vault_configured=true' >> "$GITHUB_OUTPUT"
+            SERVICE_ENV="$SERVICE_ENV,HF_VAULT_TOKEN=@HF_VAULT_TOKEN"
+          else
+            echo 'vault_configured=false' >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$HF_INFERENCE_TOKEN_VALUE" ]; then
+            echo 'inference_configured=true' >> "$GITHUB_OUTPUT"
+            SERVICE_ENV="$SERVICE_ENV,HF_INFERENCE_TOKEN=@HF_INFERENCE_TOKEN"
+          else
+            echo 'inference_configured=false' >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$LEGEND_TEACHER_API_KEY_VALUE" ] && [ -n "$LEGEND_TEACHER_MODEL_VALUE" ]; then
+            echo 'teacher_configured=true' >> "$GITHUB_OUTPUT"
+            SERVICE_ENV="$SERVICE_ENV,LEGEND_TEACHER_API_KEY=@LEGEND_TEACHER_API_KEY,LEGEND_TEACHER_MODEL=$LEGEND_TEACHER_MODEL_VALUE"
+            if [ -n "$LEGEND_TEACHER_BASE_URL_VALUE" ]; then
+              SERVICE_ENV="$SERVICE_ENV,LEGEND_TEACHER_BASE_URL=$LEGEND_TEACHER_BASE_URL_VALUE"
+            fi
+          else
+            echo 'teacher_configured=false' >> "$GITHUB_OUTPUT"
+          fi
+          echo "service_env=$SERVICE_ENV" >> "$GITHUB_OUTPUT"
+
+      - name: Store optional HF Vault credential in Koyeb
+        if: steps.optional.outputs.vault_configured == 'true'
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: HF_VAULT_TOKEN
+          secret-value: ${{ secrets.HF_VAULT_TOKEN }}
+
+      - name: Store optional HF inference credential in Koyeb
+        if: steps.optional.outputs.inference_configured == 'true'
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: HF_INFERENCE_TOKEN
+          secret-value: ${{ secrets.HF_INFERENCE_TOKEN }}
+
+      - name: Store optional teacher credential in Koyeb
+        if: steps.optional.outputs.teacher_configured == 'true'
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: LEGEND_TEACHER_API_KEY
+          secret-value: ${{ secrets.LEGEND_TEACHER_API_KEY }}
+
+      - name: Deploy shared VORAX Docker runtime to Koyeb Free
+        uses: koyeb/action-git-deploy@v1
+        with:
+          app-name: revelacode-vorax
+          service-name: koyeb-child
+          git-url: github.com/${{ github.repository }}
+          git-branch: main
+          git-builder: docker
+          service-type: web
+          service-instance-type: free
+          service-regions: fra
+          service-env: ${{ steps.optional.outputs.service_env }}
+          service-ports: '8000:http'
+          service-routes: '/:8000'
+          service-checks: '8000:http:/health'
