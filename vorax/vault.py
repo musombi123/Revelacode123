@@ -232,6 +232,77 @@ def pending_duplicate_reason(record: dict) -> str | None:
     return None
 
 
+
+def write_verified_artifact_to_vault(artifact_path: str | Path, *, child_id: str, x_value: str, provider: str) -> dict:
+    """Independently validate and persist a real Runtime-produced remote artifact."""
+    from .vlang import CHILD_RE
+
+    if not isinstance(child_id, str) or not CHILD_RE.fullmatch(child_id):
+        raise VaultError("Invalid Child ID for artifact provenance")
+    if not isinstance(provider, str) or not provider.strip():
+        raise VaultError("Remote provider identity is required for artifact provenance")
+
+    root = Path(os.getenv("LEGEND_ARTIFACT_DIR", "data/artifacts")).resolve()
+    path = Path(artifact_path).resolve()
+    if root not in path.parents:
+        raise VaultError("Artifact path is outside Runtime's configured artifact directory")
+    proof = _verify(path)
+    raw = path.read_bytes()
+    sha = proof["sha256"]
+    target = f"artifacts/{proof['folder']}/{sha}.{proof['kind']}"
+    report_path = f"reports/verification/artifacts/{sha}.json"
+    api, repo = _client()
+
+    existing_files = set(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    if target in existing_files:
+        existing = _read_file(api, repo, target)
+        if hashlib.sha256(existing).hexdigest() != sha:
+            raise VaultError("Existing Vault artifact path has a checksum conflict")
+    else:
+        _upload(api, repo, target, raw, "Runtime-verified remote VORAX artifact")
+
+    report = {
+        "version": "vorax-artifact-verification/v1",
+        "repo_type": "dataset",
+        "path": target,
+        "kind": proof["kind"],
+        "sha256": sha,
+        "size_bytes": proof["size_bytes"],
+        "child_id": child_id,
+        "x_summary": str(x_value)[:240],
+        "provider": provider,
+        "execution": "remote_provider",
+        "kaggle_t4_used": False,
+        "weights_downloaded": False,
+        "local_model_loaded": False,
+        "verification": proof,
+        "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    report_raw = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
+    _upload(api, repo, report_path, report_raw, "Record independent Runtime verification for real remote artifact")
+
+    checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    checksums = checksum_doc.get("files", {})
+    if not isinstance(checksums, dict):
+        raise VaultError("Vault checksum manifest has an invalid files field")
+    checksums[target] = sha
+    checksums[report_path] = hashlib.sha256(report_raw).hexdigest()
+    checksum_raw = json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8")
+    _upload(api, repo, "manifest/checksums.json", checksum_raw, "Update checksums for verified remote artifact")
+    return {
+        "status": "stored_verified",
+        "repo": repo,
+        "repo_type": "dataset",
+        "path": target,
+        "verification_report": report_path,
+        "sha256": sha,
+        "size_bytes": proof["size_bytes"],
+        "kind": proof["kind"],
+        "provider": provider,
+        "kaggle_t4_used": False,
+    }
+
+
 def write_pending_method(record: dict, *, child_id: str, verification: dict) -> dict:
     """Runtime-only write of a method that passed the trusted V-Lang interpreter."""
     from .vlang import CHILD_RE, dump_record, validate_template
