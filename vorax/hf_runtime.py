@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .builtins import execute_learned_input, handle_builtin_input
+from .builtins import execute_learned_input
 from .github_home import GitHubHomeError, fetch_method_index, submit_template
 from .home_index import find_duplicate
 from .store import TemplateStore
@@ -414,6 +414,33 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
     }
 
 
+@app.on_event("startup")
+def startup_reconcile_home_approved_methods():
+    """Rehydrate only Child-originated Vault methods whose metadata is confirmed by Home."""
+    index, _ = _refresh_home_index(force=True)
+    if index is None or not os.getenv("HF_VAULT_TOKEN", "").strip():
+        return
+    try:
+        receipt = _reconcile_home_methods(index)
+        _log(
+            "runtime_startup_vault_reconcile",
+            child_id=CHILD_ID,
+            x="Startup Home metadata reconciliation",
+            method="multiple" if receipt.get("loaded_method_ids") else None,
+            verification=receipt.get("status"),
+            loaded_method_ids=receipt.get("loaded_method_ids", []),
+        )
+    except Exception as exc:
+        _log(
+            "runtime_startup_vault_reconcile_failed",
+            child_id=CHILD_ID or None,
+            x="Startup Home metadata reconciliation",
+            method=None,
+            verification="unavailable",
+            reason=type(exc).__name__,
+        )
+
+
 @app.get("/health")
 def health():
     home_index, index_status = _refresh_home_index()
@@ -483,51 +510,81 @@ def input_x(
     if not isinstance(value, str) or not value.strip() or len(value) > 12_000:
         raise HTTPException(422, "x must be non-empty text of at most 12000 characters")
 
-    home_index, index_status = _refresh_home_index()
-    result = handle_builtin_input(value)
+    home_index, index_status = _refresh_home_index(force=True)
+    if home_index is None:
+        raise HTTPException(503, "Home metadata-only index is unavailable; Runtime cannot confirm approved methods")
+    try:
+        home_reconciliation = _reconcile_home_methods(home_index)
+    except VaultError as exc:
+        raise HTTPException(503, "Runtime could not reconcile Home-approved methods from Vault: " + str(exc)) from exc
+
+    result = execute_learned_input(value, STORE.all(), tool_executor=execute_tool_dict)
+    status = result.get("status", "unknown")
+    if status not in {"verified", "unknown", "blocked"}:
+        status = "unknown"
     method_id = result.get("method")
+    answer = result.get("answer")
+    artifact_sha = result.get("artifact_sha256")
+    vault_artifact = None
+
+    if status == "verified" and isinstance(answer, dict) and isinstance(answer.get("artifact"), str):
+        artifact_name = answer["artifact"]
+        artifact_path = (ARTIFACT_ROOT / artifact_name).resolve()
+        if ARTIFACT_ROOT.resolve() not in artifact_path.parents:
+            raise HTTPException(500, "Verified artifact path escaped Runtime storage")
+        try:
+            vault_artifact = write_verified_artifact_to_vault(
+                str(artifact_path),
+                child_id=child_id,
+                x_value=_redact_x(value),
+                provider=str(answer.get("provider") or "unknown"),
+            )
+            artifact_sha = vault_artifact["sha256"]
+        except VaultError as exc:
+            status = "unknown"
+            artifact_sha = None
+            result["reason"] = "remote_artifact_verified_but_vault_persistence_failed"
+            _log(
+                "artifact_vault_write_failed",
+                child_id=child_id,
+                x=_redact_x(value),
+                method=method_id,
+                verification="artifact_not_persisted",
+                reason=str(exc)[:240],
+            )
+
     verification = result.get("verification") or {
         "authority": "shared_vorax_runtime",
+        "home_approved": False,
         "child_self_certification": False,
     }
-
-    home_match = None
-    if home_index is not None:
-        normalized = re.sub(r"[^a-z0-9 ]+", " ", value.casefold())
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        home_match = next(
-            (
-                item for item in home_index["records"]
-                if item["task"].casefold() == normalized
-                or any(trigger.casefold() == normalized for trigger in item["triggers"])
-            ),
-            None,
-        )
-
     response = {
-        "status": result["status"],
+        "status": status,
         "engine": "VORAX",
         "method": method_id,
-        "answer": result.get("answer"),
-        "artifact_sha256": None,
+        "answer": answer if status == "verified" else None,
+        "artifact_sha256": artifact_sha,
+        "artifact_vault": vault_artifact,
         "verification": {
             **verification,
-            "home_method_body_loaded": False,
+            "home_method_bodies_loaded": False,
             "home_index_status": index_status["status"],
-            "home_known_method_id": home_match["id"] if home_match else None,
+            "home_reconciliation": {
+                "status": home_reconciliation.get("status"),
+                "methods_loaded_into_runtime": home_reconciliation.get("methods_loaded_into_runtime", 0),
+            },
+            "child_self_certification": False,
         },
         "home_index": index_status,
+        "reason": result.get("reason"),
     }
-    if result["status"] == "unknown" and home_match:
-        response["reason"] = "method_metadata_exists_in_home; method body was not sent to Child"
-    else:
-        response["reason"] = result.get("reason")
     _log(
         "input_x",
         child_id=child_id,
         x=_redact_x(value),
-        method=method_id or (home_match["id"] if home_match else None),
-        verification=result["status"],
+        method=method_id,
+        verification=status,
+        artifact_sha256=artifact_sha,
     )
     return response
 
