@@ -321,11 +321,11 @@ def input_x(
     value = body.get("x")
     if not isinstance(value, str) or not value.strip() or len(value) > 12_000:
         raise HTTPException(422, "x must be non-empty text of at most 12000 characters")
-    if "api_key" in body:
-        raise HTTPException(400, "Do not put API keys in JSON; authenticate using x-child-key")
     home_sync = _refresh_home()
     result = handle_input_x(value, STORE.all(), tool_executor=execute_tool_dict)
     status = result.get("status", "unknown")
+    if status not in {"verified", "unknown", "blocked"}:
+        status = "unknown"
     method_id = result.get("template_id")
     answer = result.get("answer")
     artifact_sha = _artifact_sha256(result) if status == "verified" else None
