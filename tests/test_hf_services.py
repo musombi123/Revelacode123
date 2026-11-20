@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -60,6 +61,8 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertIs(result["weights_downloaded"], False)
         self.assertNotIn("files", result["models"][0])
         self.assertIn("search=example", call.call_args.args[0])
+        self.assertIn("expand%5B%5D=inferenceProviderMapping", call.call_args.args[0])
+        self.assertNotIn("inference_provider=all", call.call_args.args[0])
 
     def test_ask_uses_remote_router_and_authenticates_child(self):
         response = {"choices": [{"message": {"content": "A bounded teaching response."}}]}
