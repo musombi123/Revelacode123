@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Iterable
 
-from .vlang import fingerprint, validate_template
+from .vlang import validate_template
 
 INDEX_VERSION = "vorax-home-method-index/v1"
 
@@ -20,7 +20,6 @@ def summarize_method(record: dict) -> dict:
         "domain": record["domain"],
         "task": record["task"],
         "triggers": list(record["triggers"]),
-        "fingerprint": fingerprint(record),
     }
 
 
@@ -49,7 +48,7 @@ def parse_method_index(raw: str | bytes) -> dict:
     records = value.get("records")
     if not isinstance(records, list) or value.get("methods_total") != len(records):
         raise ValueError("Home method index has an invalid record list")
-    required = {"id", "domain", "task", "triggers", "fingerprint"}
+    required = {"id", "domain", "task", "triggers"}
     ids = set()
     for item in records:
         if not isinstance(item, dict) or set(item) != required:
@@ -58,8 +57,6 @@ def parse_method_index(raw: str | bytes) -> dict:
             raise ValueError("Home method index entry has invalid text metadata")
         if not isinstance(item.get("triggers"), list) or any(not isinstance(x, str) for x in item["triggers"]):
             raise ValueError("Home method index triggers are invalid")
-        if not isinstance(item.get("fingerprint"), str) or len(item["fingerprint"]) != 64:
-            raise ValueError("Home method index fingerprint is invalid")
         if item["id"] in ids:
             raise ValueError("Home method index contains a duplicate ID")
         ids.add(item["id"])
@@ -72,12 +69,9 @@ def find_duplicate(index: dict, candidate: dict) -> str | None:
     """Return the duplicate reason using metadata only."""
     records = index.get("records", [])
     candidate_id = candidate.get("id")
-    candidate_fingerprint = fingerprint(candidate)
     for item in records:
         if item.get("id") == candidate_id:
             return "method_id_exists_in_home"
-        if item.get("fingerprint") == candidate_fingerprint:
-            return "method_fingerprint_exists_in_home"
         if (
             str(item.get("domain", "")).casefold() == str(candidate.get("domain", "")).casefold()
             and str(item.get("task", "")).casefold() == str(candidate.get("task", "")).casefold()
