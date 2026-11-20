@@ -20,6 +20,7 @@ class VaultError(RuntimeError):
 
 
 def _client():
+    """Open the existing private Dataset only. Never create, convert, or replace a Vault."""
     token = os.getenv("HF_VAULT_TOKEN", "").strip()
     if not token:
         raise VaultError("HF_VAULT_TOKEN is not configured")
@@ -29,14 +30,102 @@ def _client():
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise VaultError("Invalid Vault repository ID")
     api = HfApi(token=token)
-    api.create_repo(repo_id=repo, repo_type="dataset", private=True, exist_ok=True)
-    info = api.repo_info(repo_id=repo, repo_type="dataset")
+    try:
+        info = api.repo_info(repo_id=repo, repo_type="dataset")
+    except Exception as exc:
+        raise VaultError("Existing private Dataset Vault could not be opened; refusing to create a replacement") from exc
     if not getattr(info, "private", False):
-        raise VaultError(
-            f"Vault dataset {repo} is public; refusing to upload Home methods or artifacts"
-        )
+        raise VaultError(f"Vault dataset {repo} is public; refusing to upload methods or artifacts")
+    _assert_no_model_payloads(api, repo)
     return api, repo
 
+
+def _assert_no_model_payloads(api, repo: str) -> list[str]:
+    """Fail closed if the Dataset contains model weights or model architecture configs."""
+    try:
+        files = list(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    except Exception as exc:
+        raise VaultError("Could not inspect the existing Vault file list") from exc
+    weight_suffixes = (".safetensors", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".model")
+    for name in files:
+        lowered = name.lower()
+        if lowered.startswith("hf-model/") or lowered.endswith(weight_suffixes):
+            raise VaultError(f"Forbidden model payload found in Vault: {name}")
+        if lowered.endswith("/config.json") or lowered == "config.json":
+            try:
+                raw = _read_file(api, repo, name)
+                config = json.loads(raw.decode("utf-8"))
+            except Exception as exc:
+                raise VaultError(f"Could not inspect config file in Vault: {name}") from exc
+            if isinstance(config, dict) and ({"architectures", "model_type"} & set(config)):
+                raise VaultError(f"Model architecture config is forbidden in Vault: {name}")
+    return files
+
+
+def _read_file(api, repo: str, filename: str) -> bytes:
+    from huggingface_hub import hf_hub_download
+    try:
+        cached = hf_hub_download(
+            repo_id=repo,
+            filename=filename,
+            repo_type="dataset",
+            token=os.getenv("HF_VAULT_TOKEN", "").strip(),
+        )
+        return Path(cached).read_bytes()
+    except Exception as exc:
+        raise VaultError(f"Could not read existing Vault file {filename}: {type(exc).__name__}") from exc
+
+
+def _read_json(api, repo: str, filename: str, default: dict) -> dict:
+    try:
+        value = json.loads(_read_file(api, repo, filename).decode("utf-8"))
+    except VaultError as exc:
+        # Missing index files may be initialized. Other read failures must stop the write.
+        if "EntryNotFound" in str(exc) or "404" in str(exc):
+            return json.loads(json.dumps(default))
+        raise
+    if not isinstance(value, dict):
+        raise VaultError(f"Vault JSON file is not an object: {filename}")
+    return value
+
+
+def _write_json(api, repo: str, filename: str, value: dict, message: str) -> bytes:
+    raw = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    _upload(api, repo, filename, raw, message)
+    return raw
+
+
+def inspect_vault() -> dict:
+    """Read-only proof of the existing Vault's repo type, privacy, layout, and weight-free state."""
+    api, repo = _client()
+    files = set(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    required = [
+        "vlang/index.json",
+        "vlang/pending/index.json",
+        "manifest/checksums.json",
+        "manifest/runtime-version.json",
+        "manifest/sync-status.json",
+        "reports/devour/latest.json",
+        "reports/verification/latest.json",
+        "reports/go-no-go/latest.json",
+    ]
+    missing = [name for name in required if name not in files]
+    artifact_folders = {
+        name: any(path.startswith(f"artifacts/{name}/") for path in files)
+        for name in ("images", "audio", "video")
+    }
+    return {
+        "status": "verified" if not missing else "incomplete",
+        "repo": repo,
+        "repo_type": "dataset",
+        "private": True,
+        "files_total": len(files),
+        "required_files": required,
+        "missing_files": missing,
+        "artifact_folders": artifact_folders,
+        "weights_present": False,
+        "architecture_configs_present": False,
+    }
 
 def _verify(path: Path) -> dict:
     if not path.is_file() or not 0 < path.stat().st_size <= MAX_BYTES:
@@ -118,12 +207,137 @@ def _upload(api, repo: str, path: str, data: bytes, commit_message: str) -> None
     )
 
 
+
+def write_pending_method(record: dict, *, child_id: str, verification: dict) -> dict:
+    """Runtime-only write of a method that passed the trusted V-Lang interpreter."""
+    from .vlang import CHILD_RE, dump_record, validate_template
+
+    try:
+        validate_template(record, run_tests=True)
+    except Exception as exc:
+        raise VaultError("Runtime method verification failed; pending Vault write refused") from exc
+    if not isinstance(child_id, str) or not CHILD_RE.fullmatch(child_id):
+        raise VaultError("Invalid Child ID for Vault provenance")
+    if not isinstance(verification, dict) or verification.get("status") != "runtime_tests_passed":
+        raise VaultError("A trusted Runtime test report is required before a pending Vault write")
+
+    api, repo = _client()
+    raw = dump_record(record).encode("utf-8")
+    method_sha = hashlib.sha256(raw).hexdigest()
+    if verification.get("method_sha256") != method_sha:
+        raise VaultError("Runtime verification checksum does not match the canonical V-Lang method")
+    method_id = record["id"]
+    target = f"vlang/pending/{method_id}.vlang"
+    report_path = f"reports/verification/pending/{method_id}.json"
+    existing_files = set(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    if target in existing_files:
+        existing = _read_file(api, repo, target)
+        if hashlib.sha256(existing).hexdigest() != method_sha:
+            raise VaultError("A different pending method already uses this ID; refusing to overwrite it")
+
+    pending = _read_json(api, repo, "vlang/pending/index.json", {
+        "version": "vlang-index/1",
+        "records": [],
+        "note": "Runtime-verified proposals remain pending until GitHub Home review and merge.",
+    })
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    current = next((item for item in records if isinstance(item, dict) and item.get("id") == method_id), None)
+    if current and current.get("sha256") != method_sha:
+        raise VaultError("Pending index contains a conflicting method checksum")
+    entry = {
+        "id": method_id,
+        "path": target,
+        "sha256": method_sha,
+        "size_bytes": len(raw),
+        "child_id": child_id,
+        "status": "runtime_verified_pending_home_review",
+        "home_certification": "pending",
+        "verification_report": report_path,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    if current:
+        current.update(entry)
+    else:
+        records.append(entry)
+    pending["records"] = records
+
+    report = {
+        "version": "vorax-verification-report/v1",
+        "repo_type": "dataset",
+        "method_id": method_id,
+        "method_path": target,
+        "method_sha256": method_sha,
+        "child_id": child_id,
+        "verification": verification,
+        "home_certification": "pending",
+        "home_pr": None,
+        "weights_downloaded": False,
+        "local_model_loaded": False,
+        "created_at": entry["created_at"],
+    }
+    checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    checksums = checksum_doc.get("files", {})
+    if not isinstance(checksums, dict):
+        raise VaultError("Vault checksum manifest has an invalid files field")
+
+    _upload(api, repo, target, raw, "Runtime-verified V-Lang method awaiting Home review")
+    report_raw = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
+    _upload(api, repo, report_path, report_raw, "Record Runtime verification evidence for pending V-Lang method")
+    checksums[target] = method_sha
+    checksums[report_path] = hashlib.sha256(report_raw).hexdigest()
+    pending_raw = json.dumps(pending, indent=2, ensure_ascii=False).encode("utf-8")
+    checksums["vlang/pending/index.json"] = hashlib.sha256(pending_raw).hexdigest()
+    _upload(api, repo, "vlang/pending/index.json", pending_raw, "Update VORAX pending V-Lang index")
+    checksum_raw = json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8")
+    _upload(api, repo, "manifest/checksums.json", checksum_raw, "Update VORAX Vault SHA-256 checksums")
+    return {
+        "status": "written_pending",
+        "repo": repo,
+        "repo_type": "dataset",
+        "path": target,
+        "verification_report": report_path,
+        "method_sha256": method_sha,
+        "home_certification": "pending",
+    }
+
+
+def mark_pending_home_submission(method_id: str, pull_request: str) -> dict:
+    """Attach a Home PR URL to the pending Vault record without promoting it to verified."""
+    api, repo = _client()
+    pending = _read_json(api, repo, "vlang/pending/index.json", {"version": "vlang-index/1", "records": []})
+    records = pending.get("records", [])
+    entry = next((item for item in records if isinstance(item, dict) and item.get("id") == method_id), None)
+    if entry is None:
+        raise VaultError("Pending method was not found in the Vault index")
+    entry["home_pr"] = pull_request
+    entry["status"] = "submitted_for_home_review"
+    report_path = entry.get("verification_report")
+    report = _read_json(api, repo, report_path, {}) if report_path else {}
+    report["home_pr"] = pull_request
+    report["home_certification"] = "pending"
+    report_raw = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
+    pending_raw = json.dumps(pending, indent=2, ensure_ascii=False).encode("utf-8")
+    checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    checksums = checksum_doc.setdefault("files", {})
+    checksums[report_path] = hashlib.sha256(report_raw).hexdigest()
+    checksums["vlang/pending/index.json"] = hashlib.sha256(pending_raw).hexdigest()
+    _upload(api, repo, report_path, report_raw, "Attach Home review link to VORAX verification report")
+    _upload(api, repo, "vlang/pending/index.json", pending_raw, "Record VORAX pending method Home review state")
+    _upload(api, repo, "manifest/checksums.json", json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8"),
+            "Update VORAX Vault SHA-256 checksums")
+    return {"status": "submitted_for_home_review", "home_pr": pull_request}
+
 def mirror_home_and_artifacts(records, artifact_root):
     api, repo = _client()
     from .vlang import dump_record
 
     synced_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    checksums = {}
+    checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    checksums = dict(checksum_doc.get("files", {}))
+    if not isinstance(checksums, dict):
+        raise VaultError("Vault checksum manifest has an invalid files field")
     methods = []
     artifact_proofs = []
     bytes_uploaded = 0
@@ -162,12 +376,18 @@ def mirror_home_and_artifacts(records, artifact_root):
             proof["path"] = target
             artifact_proofs.append(proof)
 
-    pending_index = {
+    pending_index = _read_json(api, repo, "vlang/pending/index.json", {
         "version": "vlang-index/1",
         "records": [],
-        "note": "Unmerged proposals remain in GitHub pull requests and are not promoted to the verified Vault.",
-    }
+        "note": "Runtime-verified proposals remain pending until GitHub Home review and merge.",
+    })
+    if not isinstance(pending_index.get("records"), list):
+        raise VaultError("Vault pending index has an invalid records field")
     verified_index = {"version": "vlang-index/1", "records": methods, "synced_at": synced_at}
+    verified_index_raw = json.dumps(verified_index, indent=2, ensure_ascii=False).encode("utf-8")
+    pending_index_raw = json.dumps(pending_index, indent=2, ensure_ascii=False).encode("utf-8")
+    checksums["vlang/index.json"] = hashlib.sha256(verified_index_raw).hexdigest()
+    checksums["vlang/pending/index.json"] = hashlib.sha256(pending_index_raw).hexdigest()
     manifest = {
         "version": "vorax-vault-manifest/v1",
         "vault_repo": repo,
@@ -179,9 +399,9 @@ def mirror_home_and_artifacts(records, artifact_root):
         "artifact_proofs": artifact_proofs,
     }
     files = {
-        "vlang/index.json": json.dumps(verified_index, indent=2, ensure_ascii=False).encode("utf-8"),
-        "vlang/pending/index.json": json.dumps(pending_index, indent=2, ensure_ascii=False).encode("utf-8"),
-        "manifest/checksums.json": json.dumps({"version": "sha256/v1", "files": checksums}, indent=2, sort_keys=True).encode("utf-8"),
+        "vlang/index.json": verified_index_raw,
+        "vlang/pending/index.json": pending_index_raw,
+        "manifest/checksums.json": b"",
         "manifest/runtime-version.json": json.dumps({
             "engine": "VORAX",
             "package_version": os.getenv("VORAX_RUNTIME_VERSION", "0.2.0"),
@@ -214,6 +434,12 @@ def mirror_home_and_artifacts(records, artifact_root):
             "reason": "Only Home can authorize GO. Live deployment, quota, real modality output, campaign, and coverage evidence remain to be verified.",
         }, indent=2).encode("utf-8"),
     }
+    for target, raw in files.items():
+        if target != "manifest/checksums.json":
+            checksums[target] = hashlib.sha256(raw).hexdigest()
+    files["manifest/checksums.json"] = json.dumps(
+        {"version": "sha256/v1", "files": checksums}, indent=2, sort_keys=True
+    ).encode("utf-8")
     for target, raw in files.items():
         _upload(api, repo, target, raw, "Update VORAX Home-to-Vault index and manifests")
         bytes_uploaded += len(raw)
