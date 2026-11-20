@@ -197,15 +197,21 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
 
 
 def choose_teacher_models(models: list[dict], requested: str = "", count: int = 3) -> list[str]:
-    """Choose distinct remotely served chat teachers; never select an offline/unserved model."""
+    """Choose distinct live chat models across providers; an explicit model is only prioritised."""
     if not models:
         raise ConnectorError("Teacher metadata discovery returned no models")
+
+    requested_value = requested.strip()
+    requested_id, separator, requested_provider = requested_value.partition(":")
+    ordered = list(models)
+    if requested_id:
+        ordered.sort(key=lambda item: 0 if str(item.get("id") or "").strip() == requested_id else 1)
+
     selected = []
     selected_model_ids = set()
-    requested_id = requested.strip().split(":", 1)[0] if requested.strip() else ""
-    for item in models:
+    for item in ordered:
         model_id = str(item.get("id") or "").strip()
-        if not model_id:
+        if not model_id or model_id in selected_model_ids:
             continue
         providers = [
             provider for provider in item.get("providers", [])
@@ -214,6 +220,11 @@ def choose_teacher_models(models: list[dict], requested: str = "", count: int = 
             and str(provider.get("task", "")).casefold() in {"conversational", "text-generation"}
             and str(provider.get("provider") or "").strip()
         ]
+        if requested_id and model_id == requested_id and separator:
+            providers = [
+                provider for provider in providers
+                if str(provider.get("provider") or "").casefold() == requested_provider.casefold()
+            ]
         if not providers:
             continue
         providers.sort(
@@ -223,19 +234,15 @@ def choose_teacher_models(models: list[dict], requested: str = "", count: int = 
             ),
             reverse=True,
         )
-        # Honour an explicitly selected model only if it is present in the live catalogue.
-        if requested_id and model_id != requested_id:
-            continue
-        if model_id in selected_model_ids:
-            continue
         provider = str(providers[0]["provider"]).strip()
         selected.append(f"{model_id}:{provider}")
         selected_model_ids.add(model_id)
-        if len(selected) >= count or requested_id:
+        if len(selected) >= count:
             break
-    if requested_id and not selected:
+
+    if requested_id and not any(model_ref.split(":", 1)[0] == requested_id for model_ref in selected):
         raise ConnectorError(
-            "The requested model has no live conversational Inference Provider in the current metadata catalogue"
+            "The requested model/provider is not live in the current metadata catalogue"
         )
     if not selected:
         raise ConnectorError("No live conversational Inference Provider models were found")
