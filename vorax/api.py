@@ -29,6 +29,19 @@ class ComposeRequest(BaseModel):
     template_id: str|None=None
     task: str|None=None
     inputs: dict=Field(default_factory=dict)
+def actor(request: Request):
+    admin = request.headers.get("x-legend-admin-key", "")
+    child_id = request.headers.get("x-child-id", "")
+    child_key = request.headers.get("x-child-key", "")
+    if ADMIN_KEY and hmac.compare_digest(admin, ADMIN_KEY):
+        return "admin"
+    if CHILD_ID and CHILD_KEY and child_id == CHILD_ID and hmac.compare_digest(child_key, CHILD_KEY):
+        if STORE.child_blocked(CHILD_ID):
+            raise HTTPException(403, "Child is blocked by Home after repeated rejected proposals")
+        return CHILD_ID
+    raise HTTPException(403, "Authenticated VORAX Child required")
+
+
 def runtime_tool_executor(name: str, inputs: dict):
     """Use only registered providers. Kaggle never runs local model or media generation."""
     return execute_registered_tool(name, inputs)
