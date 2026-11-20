@@ -393,6 +393,7 @@ class VaultProtectionTests(unittest.TestCase):
                 "domain": record["domain"],
                 "task": record["task"],
                 "triggers": record["triggers"],
+                "method_sha256": digest,
             }],
         }
         with patch.dict(os.environ, {"HF_VAULT_TOKEN": "dataset-token"}), \
@@ -443,6 +444,7 @@ class VaultProtectionTests(unittest.TestCase):
             "records": [{
                 "id": record["id"], "domain": record["domain"],
                 "task": "a different Home task", "triggers": record["triggers"],
+                "method_sha256": digest,
             }],
         }
         with patch.dict(os.environ, {"HF_VAULT_TOKEN": "dataset-token"}), \
