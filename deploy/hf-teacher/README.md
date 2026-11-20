@@ -21,8 +21,9 @@ Teacher secrets:
 - `HF_TOKEN` — token with Inference Providers permission
 - `HF_READ_TOKEN` — optional Hub metadata-read token
 - `VORAX_KAGGLE_CHILD_API_KEY`
+- `VORAX_TEACHER_ATTESTATION_KEY` — shared only with the Runtime Space; never add it to Kaggle.
 - `VORAX_CHILD_ID=kaggle-child`
 
 The Teacher never writes to the VORAX Vault. Only the Runtime Service may write a Runtime-verified pending method.
 
-All inference responses identify the requested model, provider (or `unknown` if not supplied by the upstream response), remote inference status, and `kaggle_t4_used=false`.
+All inference responses identify the requested model, provider (or `unknown` if not supplied by the upstream response), remote inference status, and `kaggle_t4_used=false`. Each response is HMAC-SHA256 signed over its exact response hash and provenance fields; Runtime rejects unsigned, altered, stale, or provider-mismatched responses.
