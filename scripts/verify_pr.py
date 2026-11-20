@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Trusted-base verifier for data-only child template pull requests."""
 from __future__ import annotations
-import base64,json,os,re,sys,urllib.parse,urllib.request
+import base64,hashlib,json,os,re,sys,uuid,urllib.parse,urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from vorax.vlang import parse_document,fingerprint
+from vorax.vlang import parse_document,fingerprint,dump_record
 
 repo=os.environ["GITHUB_REPOSITORY"]; number=os.environ["PR_NUMBER"]; token=os.environ["GITHUB_TOKEN"]
 api="https://api.github.com"
@@ -17,6 +17,10 @@ def get(path):
 
 def put(path,body):
     req=urllib.request.Request(api+path,data=json.dumps(body).encode(),headers={**headers,"Content-Type":"application/json"},method="PUT")
+    with urllib.request.urlopen(req,timeout=30) as res: return json.loads(res.read().decode())
+
+def post(path,body):
+    req=urllib.request.Request(api+path,data=json.dumps(body).encode(),headers={**headers,"Content-Type":"application/json"},method="POST")
     with urllib.request.urlopen(req,timeout=30) as res: return json.loads(res.read().decode())
 
 pr=get(f"/repos/{repo}/pulls/{number}")
@@ -42,12 +46,31 @@ def reject(message,child=branch_child):
                 document=json.loads(base64.b64decode(current["content"]).decode())
                 blocked=set(document.get("blocked_children",[])); blocked.add(child)
                 document["blocked_children"]=sorted(blocked)
-                put(path,{"message":f"legend: block child {child} after 100 rejected proposals",
-                          "content":base64.b64encode((json.dumps(document,indent=2)+"\n").encode()).decode(),
-                          "sha":current["sha"],"branch":"main"})
-                print(f"HOME BLOCKED CHILD {child}: 100 consecutive rejected proposals")
+                main_ref=get(f"/repos/{repo}/git/ref/heads/main")
+                branch_name=f"home/blocked-child/{child}/{uuid.uuid4().hex[:8]}"
+                post(f"/repos/{repo}/git/refs",{
+                    "ref":"refs/heads/"+branch_name,
+                    "sha":main_ref["object"]["sha"],
+                })
+                put(path,{
+                    "message":f"home: propose block for child {child} after 100 rejected proposals",
+                    "content":base64.b64encode((json.dumps(document,indent=2)+"\n").encode()).decode(),
+                    "sha":current["sha"],
+                    "branch":branch_name,
+                })
+                block_pr=post(f"/repos/{repo}/pulls",{
+                    "title":f"Home security review: block Child {child}",
+                    "body":(
+                        f"Trusted Home verifier observed at least 100 consecutive rejected proposals "
+                        f"from Child {child}. This is a security-control proposal only. It requires "
+                        "human review and is not merged automatically."
+                    ),
+                    "head":branch_name,
+                    "base":"main",
+                })
+                print(f"HOME BLOCKLIST PR: {block_pr.get('html_url')}")
         except Exception as exc:
-            print("WARNING: could not persist child blocklist update: "+type(exc).__name__)
+            print("WARNING: could not open Home blocklist PR: "+type(exc).__name__)
     raise SystemExit("REJECT: "+message)
 
 if not branch_child: reject("branch must use child/<child-id>/<unique-suffix>")
@@ -64,9 +87,16 @@ for run in own:
 if failures>=100: reject("child has 100 consecutive failed Home validations")
 
 changed=get(f"/repos/{repo}/pulls/{number}/files?per_page=100")
-if not changed or len(changed)>5: reject("a child may submit 1–5 templates per pull request")
+if not changed or len(changed)>6: reject("a child proposal must contain 1–5 V-Lang methods and one Home metadata index update")
+index_changes=[item for item in changed if item.get("filename")=="templates/library/index.json"]
+proposal_files=[item for item in changed if item.get("filename","").startswith("templates/library/children/")]
+if len(index_changes)!=1 or index_changes[0].get("status")!="modified":
+    reject("every Child method proposal must update the metadata-only Home index")
+if not 1<=len(proposal_files)<=5 or len(changed)!=len(proposal_files)+1:
+    reject("a child proposal may only contain 1–5 V-Lang files plus templates/library/index.json")
+
 proposals=[]
-for item in changed:
+for item in proposal_files:
     path=item["filename"]
     if not path.startswith("templates/library/children/") or not path.endswith((".vlang",".tlang")):
         reject("template PRs may only add files under templates/library/children/")
@@ -81,25 +111,59 @@ for item in changed:
     if not child or child!=branch_child: reject("V-Lang child identity does not match its branch")
     if t["provenance"].get("kind")!="teacher": reject("child submissions must identify a teacher-derived proposal")
     slug=re.sub(r"[^a-z0-9_-]+","_",t["id"].lower()).strip("_")
-    extension=".vlang" if path.endswith(".vlang") else ".tlang"
-    expected=f"templates/library/children/{child}_{slug}{extension}"
+    expected=f"templates/library/children/{child}_{slug}.vlang"
     if path!=expected: reject("filename must be canonical for child ID and template ID")
     proposals.append(t)
 
 tree=get(f"/repos/{repo}/git/trees/{pr['base']['sha']}?recursive=1")
 if tree.get("truncated"): reject("Home tree is truncated; refusing partial duplicate check")
-existing_ids=set(); existing_fps=set(); existing_tasks=set()
+existing_ids=set(); existing_fps=set(); existing_tasks=set(); existing_triggers=set(); existing_records=[]
 for node in tree.get("tree",[]):
     path=node.get("path","")
     if node.get("type")!="blob" or not path.startswith("templates/library/") or not path.endswith((".vlang",".tlang")): continue
     blob=get(f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={pr['base']['sha']}")
     for old in parse_document(base64.b64decode(blob["content"]).decode("utf-8")):
+        existing_records.append(old)
         existing_ids.add(old["id"]); existing_fps.add(fingerprint(old))
         existing_tasks.add((old["domain"].casefold(),old["task"].casefold()))
+        for trigger in old["triggers"]:
+            existing_triggers.add((old["domain"].casefold(),trigger.casefold()))
 for t in proposals:
     if t["id"] in existing_ids: reject("template ID already exists: "+t["id"])
     if fingerprint(t) in existing_fps: reject("duplicate procedure: "+t["id"])
     key=(t["domain"].casefold(),t["task"].casefold())
     if key in existing_tasks: reject("duplicate task/domain: "+t["id"])
+    trigger_keys={(t["domain"].casefold(),trigger.casefold()) for trigger in t["triggers"]}
+    if trigger_keys & existing_triggers: reject("duplicate task trigger/domain: "+t["id"])
     existing_ids.add(t["id"]); existing_fps.add(fingerprint(t)); existing_tasks.add(key)
+    existing_triggers.update(trigger_keys)
+    existing_records.append(t)
+
+# Home verifies a metadata-only index using only trusted base interpreter code.
+# This verifier is executed from the base commit, so it must not import modules introduced by the Child PR.
+index_records=[]
+for record in existing_records:
+    canonical=dump_record(record).encode("utf-8")
+    index_records.append({
+        "id":record["id"],
+        "domain":record["domain"],
+        "task":record["task"],
+        "triggers":list(record["triggers"]),
+        "method_sha256":hashlib.sha256(canonical).hexdigest(),
+    })
+index_records.sort(key=lambda item:item["id"])
+expected_index={
+    "version":"vorax-home-method-index/v1",
+    "methods_total":len(index_records),
+    "records":index_records,
+}
+index_blob=get(f"/repos/{repo}/contents/templates/library/index.json?ref={pr['head']['sha']}")
+try:
+    submitted_index=json.loads(base64.b64decode(index_blob["content"]).decode("utf-8"))
+except Exception as exc:
+    reject("Home metadata index is invalid: "+str(exc)[:180])
+if not isinstance(submitted_index,dict) or submitted_index!=expected_index:
+    reject("Home metadata index is not the exact metadata/hash summary of Home plus proposed methods")
+
+
 print(f"PASS: {len(proposals)} child template(s): structure, safety, duplicate checks, and executable tests")

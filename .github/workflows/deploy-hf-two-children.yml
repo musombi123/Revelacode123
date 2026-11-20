@@ -1,0 +1,56 @@
+name: Deploy VORAX Teacher and Runtime Spaces
+
+on:
+  workflow_dispatch:
+    inputs:
+      smoke_remote_inference:
+        description: "Make one real Teacher inference request (may consume provider quota/credits)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  deploy:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact tagged release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require published release and green exact-SHA CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/require_green_release.py
+
+      - name: Install deployment dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Deploy two public weight-free Docker Spaces
+        env:
+          HF_SPACE_TOKEN: ${{ secrets.HF_SPACE_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          HF_VAULT_TOKEN: ${{ secrets.HF_VAULT_TOKEN }}
+          VORAX_TEACHER_ATTESTATION_KEY: ${{ secrets.VORAX_TEACHER_ATTESTATION_KEY }}
+          VORAX_KAGGLE_CHILD_API_KEY: ${{ secrets.VORAX_KAGGLE_CHILD_API_KEY }}
+          VORAX_HOME_READ_TOKEN: ${{ secrets.VORAX_HOME_READ_TOKEN }}
+          VORAX_HOME_WRITE_TOKEN: ${{ secrets.VORAX_HOME_WRITE_TOKEN }}
+          VORAX_TEACHER_MODEL: ${{ vars.VORAX_TEACHER_MODEL }}
+          VORAX_ALLOW_BILLABLE_INFERENCE: ${{ vars.VORAX_ALLOW_BILLABLE_INFERENCE }}
+        shell: bash
+        run: |
+          args=(--health-wait-seconds 300)
+          if [[ "${{ inputs.smoke_remote_inference }}" == "true" ]]; then
+            args+=(--smoke-remote-inference)
+          fi
+          python scripts/deploy_hf_children.py "${args[@]}"

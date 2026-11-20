@@ -1,0 +1,335 @@
+{
+  "version": "vorax-home-method-index/v1",
+  "methods_total": 30,
+  "records": [
+    {
+      "id": "code.execute",
+      "domain": "code",
+      "task": "execute a bounded arithmetic code expression",
+      "triggers": [
+        "evaluate code expression",
+        "run arithmetic expression",
+        "execute math expression"
+      ],
+      "method_sha256": "38eb3156c2846f5d3f2ff6f4e223d473ac836e9d9520343c78914e8aed8a2513"
+    },
+    {
+      "id": "convert.celsius_fahrenheit",
+      "domain": "conversion",
+      "task": "convert Celsius temperature to Fahrenheit",
+      "triggers": [
+        "celsius to fahrenheit",
+        "c to f"
+      ],
+      "method_sha256": "cd9fe8d7ffc2b80f13c99cd34d044d25522395509e322c70764976f928d23121"
+    },
+    {
+      "id": "convert.kg_pounds",
+      "domain": "conversion",
+      "task": "convert kilograms to pounds",
+      "triggers": [
+        "kilograms to pounds",
+        "kg to pounds"
+      ],
+      "method_sha256": "38d1b871e50d03e2279ea5ca733fd9205063707b746def1d7b40b0a1375e89db"
+    },
+    {
+      "id": "convert.km_miles",
+      "domain": "conversion",
+      "task": "convert kilometres to miles",
+      "triggers": [
+        "kilometres to miles",
+        "km to miles"
+      ],
+      "method_sha256": "a3040c120f18b26b16226057927b9133a7c73f5342fd6ee3f0f2a3ece5a8b5a5"
+    },
+    {
+      "id": "geometry.triangle_area",
+      "domain": "geometry",
+      "task": "calculate triangle area from base and height",
+      "triggers": [
+        "triangle area",
+        "area of triangle",
+        "half base times height"
+      ],
+      "method_sha256": "60785c21597cdf8c52e7a61ebee449487f7bf0deaafc6d327f6835ffaf0df12b"
+    },
+    {
+      "id": "greeting.identity",
+      "domain": "conversation",
+      "task": "respond to a greeting and identify VORAX truthfully",
+      "triggers": [
+        "hello who are you",
+        "who are you",
+        "hello",
+        "hi vorax",
+        "introduce yourself"
+      ],
+      "method_sha256": "2e65531b6e3248796ab151f07d1508592efaaa48a213ae8ddfb78609e5d4e141"
+    },
+    {
+      "id": "image.generate",
+      "domain": "image",
+      "task": "generate a verified image from a prompt",
+      "triggers": [
+        "generate image",
+        "make an image",
+        "draw a picture",
+        "create a picture"
+      ],
+      "method_sha256": "f7cdab5b0a0643b8ec95b19dc8dd2dc7c26886706f23b96757fd768bc8e441e3"
+    },
+    {
+      "id": "input.classifier",
+      "domain": "routing",
+      "task": "classify one arbitrary user input into a bounded VORAX task type",
+      "triggers": [
+        "classify input x",
+        "classify user request",
+        "input x task classification"
+      ],
+      "method_sha256": "babf3c39a07248da7253f8e15265a7332b4f1b3417b05ae2d29590aaad399411"
+    },
+    {
+      "id": "logo.generate",
+      "domain": "design",
+      "task": "generate a logo image from a brand brief",
+      "triggers": [
+        "make me a logo",
+        "generate logo",
+        "create a logo",
+        "brand mark"
+      ],
+      "method_sha256": "3c283cbeb8ccc8f0a1f59d7d22e31ee09ed9d596bea53bba2ce24f0b99b48ea1"
+    },
+    {
+      "id": "math.add",
+      "domain": "math",
+      "task": "add two numbers",
+      "triggers": [
+        "add",
+        "sum",
+        "plus"
+      ],
+      "method_sha256": "e766d952c047e886f6be3721acb4a30d255543aeeefea40cb21d7c0c2bd2791c"
+    },
+    {
+      "id": "math.divide",
+      "domain": "math",
+      "task": "divide the first number by the second",
+      "triggers": [
+        "divide",
+        "quotient",
+        "ratio"
+      ],
+      "method_sha256": "5263415baeb0d1113987684d2cecfc14e0e545aa1d3defc52214f458674d18cb"
+    },
+    {
+      "id": "math.multiply",
+      "domain": "math",
+      "task": "multiply two numbers",
+      "triggers": [
+        "multiply",
+        "product",
+        "times"
+      ],
+      "method_sha256": "46a331c381ec18c4e358d067984f282cdcf15e1f764e37db897a2a83070a4b82"
+    },
+    {
+      "id": "math.percentage_change",
+      "domain": "math",
+      "task": "calculate percentage change from an old value to a new value",
+      "triggers": [
+        "percentage change",
+        "percent change",
+        "growth rate"
+      ],
+      "method_sha256": "6d5321764cee49b385fbfec9e0618286e854feea76e458933f181c004567ea47"
+    },
+    {
+      "id": "math.percentage_of",
+      "domain": "math",
+      "task": "calculate a percentage of a value",
+      "triggers": [
+        "percentage of",
+        "percent of",
+        "percentage"
+      ],
+      "method_sha256": "22e15131faa63d2e14465975cf13104e610a45af406db7fd28a184c00d748fc6"
+    },
+    {
+      "id": "math.subtract",
+      "domain": "math",
+      "task": "subtract the second number from the first",
+      "triggers": [
+        "subtract",
+        "minus",
+        "difference"
+      ],
+      "method_sha256": "0104f462e8d7702f4885ba3100816bba5867910f19d56481850fd58e69793021"
+    },
+    {
+      "id": "music.generate",
+      "domain": "music",
+      "task": "generate a music artifact from a prompt",
+      "triggers": [
+        "generate music",
+        "make a song",
+        "create a beat",
+        "compose music"
+      ],
+      "method_sha256": "dea9588aae920c35a135ce93b5e2c38a29b552baaba0182ef163aa4aca198929"
+    },
+    {
+      "id": "speech.synthesize",
+      "domain": "audio",
+      "task": "synthesize speech from text",
+      "triggers": [
+        "voice note",
+        "read this aloud",
+        "speak this",
+        "text to speech"
+      ],
+      "method_sha256": "d20fac2c452e1bbed0a885d898b04b67d0a0658c4635095e910e08190bbd5adb"
+    },
+    {
+      "id": "stats.average",
+      "domain": "statistics",
+      "task": "calculate the arithmetic mean of a number list",
+      "triggers": [
+        "average",
+        "mean"
+      ],
+      "method_sha256": "cedf29d714fd30650724f1b6dcd67959af6e6cb102e0576a1236e4be3a55edcd"
+    },
+    {
+      "id": "stats.count_list",
+      "domain": "statistics",
+      "task": "count items in a list",
+      "triggers": [
+        "count items",
+        "list length",
+        "number of items"
+      ],
+      "method_sha256": "c2a039e9c196da9e6487d60e4b5c53a567a9e42a768b5917a6fde09ae1b257cf"
+    },
+    {
+      "id": "stats.maximum",
+      "domain": "statistics",
+      "task": "find the largest number in a list",
+      "triggers": [
+        "maximum",
+        "largest",
+        "highest"
+      ],
+      "method_sha256": "52ca247615eeeedeb414f0f1eee96170ab53c60f6ac8d19a36f9e80b5a70a9f0"
+    },
+    {
+      "id": "stats.minimum",
+      "domain": "statistics",
+      "task": "find the smallest number in a list",
+      "triggers": [
+        "minimum",
+        "smallest",
+        "lowest"
+      ],
+      "method_sha256": "34f142792c2f0a69fe7ad51c9adbb38a4ab7f0ff3e8138f567b5943a546cafb8"
+    },
+    {
+      "id": "stats.sort_ascending",
+      "domain": "statistics",
+      "task": "sort numeric values in ascending order",
+      "triggers": [
+        "sort ascending",
+        "ascending order",
+        "sort numbers"
+      ],
+      "method_sha256": "86bda12e59975380fffc787070a7bf11c0286f2a2b4ca5ad51963b1137ed2518"
+    },
+    {
+      "id": "stats.sort_descending",
+      "domain": "statistics",
+      "task": "sort numeric values in descending order",
+      "triggers": [
+        "sort descending",
+        "descending order",
+        "reverse sort"
+      ],
+      "method_sha256": "e9e4611188efd9f59c4eb80047e15583f66c90d4234b1a87784c1bee3df3fecc"
+    },
+    {
+      "id": "stats.unique",
+      "domain": "statistics",
+      "task": "remove duplicate values while preserving first occurrence",
+      "triggers": [
+        "unique values",
+        "remove duplicates",
+        "deduplicate"
+      ],
+      "method_sha256": "a5f1389b515bb8a8bae8829cff8c9503ea4c4a2e606eba1368553e981932c3c4"
+    },
+    {
+      "id": "text.lowercase",
+      "domain": "text",
+      "task": "convert text to lowercase",
+      "triggers": [
+        "lowercase",
+        "small letters"
+      ],
+      "method_sha256": "78f3612f8c12d198afd7b423eec286fbe53b393820961cc2b3a0de959b273344"
+    },
+    {
+      "id": "text.reverse",
+      "domain": "text",
+      "task": "reverse the order of characters in text",
+      "triggers": [
+        "reverse text",
+        "reverse string"
+      ],
+      "method_sha256": "eb13103c63aa774c9dc0a0520f55175630c732e917dd07b3be8b8347a58a29b4"
+    },
+    {
+      "id": "text.uppercase",
+      "domain": "text",
+      "task": "convert text to uppercase",
+      "triggers": [
+        "uppercase",
+        "capital letters"
+      ],
+      "method_sha256": "d224b43046753becdbc4d7ca5a9acc81edb589d1ebbaa1d2360949e62de27d10"
+    },
+    {
+      "id": "text.word_count",
+      "domain": "text",
+      "task": "count whitespace-separated words in text",
+      "triggers": [
+        "word count",
+        "count words"
+      ],
+      "method_sha256": "5de26746d0f75c9559c4314a230dfaaf6e5cf0788cfc4334b0473bb3b7ad5dd8"
+    },
+    {
+      "id": "translation.swahili",
+      "domain": "language",
+      "task": "translate English text to Swahili",
+      "triggers": [
+        "translate to swahili",
+        "translate into kiswahili",
+        "english to swahili"
+      ],
+      "method_sha256": "c8cfc519797e3ce1b0594d90eb50b3479e55c5dcb683623e09403034255d7db4"
+    },
+    {
+      "id": "video.generate",
+      "domain": "video",
+      "task": "generate a video artifact from a prompt",
+      "triggers": [
+        "generate video",
+        "make a video",
+        "create a clip",
+        "short video"
+      ],
+      "method_sha256": "9669d34566f2e09dfafe43073e6703be4d8996410779942c3a627dcfeef2e912"
+    }
+  ]
+}

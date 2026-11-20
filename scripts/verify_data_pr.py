@@ -78,6 +78,14 @@ head_repo = pr.get("head", {}).get("repo") or {}
 if head_repo.get("full_name") != repo:
     fail("only same-repository data-only proposals are eligible")
 files = get(f"/repos/{repo}/pulls/{number}/files?per_page=100")
+changed_paths = {item.get("filename", "") for item in files}
+if "templates/library/index.json" in changed_paths:
+    # Child method + index proposals are validated by the stricter V-Lang gate, not this JSON-only gate.
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write("eligible=false\n")
+        output.write("checked_files=0\n")
+    print("INFO: Home index update deferred to the trusted V-Lang proposal gate; data-only auto-merge skipped")
+    raise SystemExit(0)
 if not files or len(files) > 30:
     fail("data-only proposal must contain 1–30 files")
 checked = []

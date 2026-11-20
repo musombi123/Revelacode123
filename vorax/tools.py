@@ -111,6 +111,12 @@ def _model_for(name: str) -> str:
     return model
 
 def _hf(name: str, payload: Any, timeout: int, *, binary: bool) -> tuple[bytes, str]:
+    allow_billable = os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"}
+    if not allow_billable:
+        raise ToolError(
+            "Remote tool-provider calls are disabled by default; enable "
+            "VORAX_ALLOW_BILLABLE_INFERENCE explicitly before using a billable adapter."
+        )
     token = os.getenv("HF_INFERENCE_TOKEN") or os.getenv("HF_TOKEN")
     if not token:
         raise ToolError("Hugging Face inference token is not configured")
@@ -290,39 +296,7 @@ def execute_tool(name: str, inputs: dict[str, Any], *, provider: str | None = No
         result.sha256=hashlib.sha256((ARTIFACT_ROOT/result.artifact).read_bytes()).hexdigest() if result.artifact else None
         return result
     if provider == "kaggle-gpu":
-        if name != "image.generate":
-            raise ToolError(f"No local Kaggle GPU adapter is implemented for {name}; remote inference fallback is disabled")
-        prompt=_string(inputs.get("prompt"),"prompt")
-        width,height=_dimensions(inputs.get("width",512),inputs.get("height",512))
-        try:
-            from .providers.kaggle_gpu import generate_image
-            generated=generate_image(prompt,width,height)
-        except Exception as exc:
-            raise ToolError("Kaggle local GPU image adapter failed: "+type(exc).__name__+": "+str(exc)[:220]) from exc
-        data=generated.get("data")
-        if not isinstance(data,bytes) or not data:
-            raise ToolError("Kaggle GPU adapter returned no PNG bytes")
-        telemetry=generated.get("gpu_telemetry")
-        if not isinstance(telemetry,dict) or telemetry.get("gpu_used") is not True:
-            raise ToolError("Kaggle adapter did not prove CUDA execution; artifact rejected")
-        path=_save(data,".png")
-        try:
-            verification=_verify_png(path)
-            if verification["width"] != width or verification["height"] != height:
-                raise ToolError("Generated PNG dimensions differ from the request")
-        except Exception:
-            path.unlink(missing_ok=True)
-            raise
-        result=ToolResult(
-            "verified",name,"kaggle-local-diffusers",path.name,"image/png",
-            path.stat().st_size,verification=verification,
-            elapsed_ms=int(generated.get("elapsed_ms") or (time.monotonic()-started)*1000),
-            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-            model_id=generated.get("model_id"),gpu_telemetry=telemetry,
-            output={"seed":generated.get("seed"),"steps":generated.get("steps"),
-                    "width":generated.get("width"),"height":generated.get("height")},
-        )
-        return result
+        raise ToolError("Kaggle is a Learning Connector and cannot execute local media generation")
     if provider not in (None, "huggingface"):
         raise ToolError("Requested provider is not registered for this adapter")
     timeout=contract.timeout_seconds

@@ -1,29 +1,44 @@
 #!/usr/bin/env python3
-"""Ephemeral Kaggle worker. Uses the shared VORAX package; does not claim unsupported GPU media."""
+"""On-demand VORAX Learning Connector for Kaggle.
+
+This process discovers public metadata, asks remote Teachers, and forwards a
+candidate to the trusted HF Runtime. It never clones Home, downloads weights,
+runs a local model, executes media generation, processes queues, or writes Vault.
+"""
 from __future__ import annotations
 
+import argparse
 import base64
-import hashlib
 import json
-import re
 import os
 import re
-import subprocess
 import sys
-import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
-REPO = os.getenv("LEGEND_HOME_REPO", "musombi123/Revelacode123")
-ROOT = Path("/kaggle/working/vorax-home")
-REPORT = Path("/kaggle/working/vorax-kaggle-report.json")
-API = "http://127.0.0.1:8765"
-MARKER = "<!-- VORAX_X_QUEUE_V1 -->"
-HEAVY = {"image", "logo", "music", "video", "speech", "audio", "3d"}
+HOME_REPO = "musombi123/Revelacode123"
+HOME_BRANCH = "main"
+TEACHER_URL = os.getenv(
+    "VORAX_TEACHER_URL",
+    "https://musombi-vorax-teacher-service.hf.space",
+).rstrip("/")
+RUNTIME_URL = os.getenv(
+    "VORAX_RUNTIME_URL",
+    "https://musombi-vorax-runtime-service.hf.space",
+).rstrip("/")
+CHILD_ID = "kaggle-child"
+REPORT_PATH = Path("/kaggle/working/vorax-learning-report.json")
+INDEX_VERSION = "vorax-home-method-index/v1"
 
 
-def secret(name: str, required: bool = False) -> str:
+class ConnectorError(RuntimeError):
+    pass
+
+
+def kaggle_secret(name: str, required: bool = False) -> str:
     try:
         from kaggle_secrets import UserSecretsClient
         value = UserSecretsClient().get_secret(name) or ""
@@ -31,412 +46,508 @@ def secret(name: str, required: bool = False) -> str:
         value = ""
     value = value.strip()
     if required and not value:
-        raise RuntimeError(f"Kaggle secret {name} is required")
+        raise ConnectorError(f"Required Kaggle secret is missing: {name}")
     return value
 
 
-def github(method: str, path: str, token: str, payload=None):
+def request_json(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: dict | None = None,
+    child_key: str = "",
+    timeout: int = 45,
+) -> tuple[int, dict]:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": "Bearer " + token,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "VORAX-Kaggle-Child",
+        "Accept": "application/json",
+        "User-Agent": "VORAX-Kaggle-Learning-Connector/1.0",
     }
-    data = json.dumps(payload).encode() if payload is not None else None
     if data is not None:
         headers["Content-Type"] = "application/json"
-    request = urllib.request.Request("https://api.github.com" + path, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=30) as response:
-        raw = response.read()
-        return json.loads(raw.decode()) if raw else {}
-
-
-def load_release_pin():
-    manifest = Path(__file__).with_name("vorax-release.json")
-    if not manifest.is_file():
-        raise RuntimeError("Kaggle release pin manifest is missing; refusing to clone main")
-    payload = json.loads(manifest.read_text(encoding="utf-8"))
-    if payload.get("schema") != "vorax-release/v1":
-        raise RuntimeError("Unsupported Kaggle release pin manifest")
-    ref = str(payload.get("ref", "")).strip()
-    sha = str(payload.get("sha", "")).strip().lower()
-    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,128}", ref) or not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise RuntimeError("Kaggle release pin manifest is invalid")
-    return ref, sha
-
-
-def clone_home(read_token: str):
-    release_ref, expected_sha = load_release_pin()
-    if ROOT.exists():
-        subprocess.run(["rm", "-rf", str(ROOT)], check=True)
-    encoded = base64.b64encode(("x-access-token:" + read_token).encode()).decode()
-    env = os.environ.copy()
-    env["GIT_CONFIG_COUNT"] = "1"
-    env["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraheader"
-    env["GIT_CONFIG_VALUE_0"] = "AUTHORIZATION: basic " + encoded
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", release_ref,
-         "https://github.com/" + REPO + ".git", str(ROOT)],
-        check=True, timeout=180, env=env,
-    )
-    actual_sha = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True, timeout=30
-    ).strip().lower()
-    if actual_sha != expected_sha:
-        subprocess.run(["rm", "-rf", str(ROOT)], check=False)
-        raise RuntimeError(
-            f"Kaggle checkout mismatch: expected {expected_sha}, received {actual_sha}"
-        )
-
-
-def gpu_telemetry():
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,uuid,memory.total", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=20, check=True,
-        )
-        devices = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        return {"available": bool(devices), "devices": devices, "source": "nvidia-smi"}
-    except Exception as exc:
-        return {"available": False, "devices": [], "source": "nvidia-smi",
-                "failure": type(exc).__name__}
-
-
-def request_json(method: str, path: str, child_key: str, payload=None):
-    data = json.dumps(payload or {}).encode()
+    if child_key:
+        headers["x-child-id"] = CHILD_ID
+        headers["x-child-key"] = child_key
     request = urllib.request.Request(
-        API + path,
+        base_url + path,
         data=data,
+        headers=headers,
         method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(3 * 1024 * 1024 + 1)
+            if len(raw) > 3 * 1024 * 1024:
+                raise ConnectorError("Remote response exceeded the 3 MB connector limit")
+            decoded = json.loads(raw.decode("utf-8"))
+            if not isinstance(decoded, dict):
+                raise ConnectorError("Remote service returned an unexpected JSON shape")
+            return response.status, decoded
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(1000).decode("utf-8", "replace")
+        raise ConnectorError(
+            f"Remote service returned HTTP {exc.code}: {detail[:500]}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ConnectorError("Remote request failed: " + type(exc).__name__) from exc
+
+
+def read_home_metadata_index(read_token: str) -> dict:
+    path = (
+        f"/repos/{HOME_REPO}/contents/templates/library/index.json"
+        f"?ref={urllib.parse.quote(HOME_BRANCH, safe='')}"
+    )
+    request = urllib.request.Request(
+        "https://api.github.com" + path,
         headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "x-child-id": "kaggle-child",
-            "x-child-key": child_key,
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + read_token,
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "VORAX-Kaggle-Learning-Connector",
         },
     )
-    with urllib.request.urlopen(request, timeout=90) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            blob = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise ConnectorError(
+            f"Home metadata index could not be read (HTTP {exc.code}); Children never fetch method bodies"
+        ) from exc
+    if blob.get("encoding") != "base64":
+        raise ConnectorError("Home metadata index is not a base64 JSON file")
+    try:
+        index = json.loads(base64.b64decode(blob["content"]).decode("utf-8"))
+    except Exception as exc:
+        raise ConnectorError("Home metadata index is malformed") from exc
+    if (
+        not isinstance(index, dict)
+        or index.get("version") != INDEX_VERSION
+        or not isinstance(index.get("records"), list)
+        or index.get("methods_total") != len(index["records"])
+    ):
+        raise ConnectorError("Home metadata index failed its schema check")
+    for item in index["records"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"id", "domain", "task", "triggers", "method_sha256"}
+            or not isinstance(item.get("id"), str)
+            or not isinstance(item.get("domain"), str)
+            or not isinstance(item.get("task"), str)
+            or not isinstance(item.get("triggers"), list)
+            or any(not isinstance(value, str) for value in item.get("triggers", []))
+            or not isinstance(item.get("method_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", item.get("method_sha256", ""))
+        ):
+            raise ConnectorError("Home index contains an invalid metadata/checksum entry")
+    return index
 
 
-def start_runtime(env):
-    server = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "vorax.api:app", "--host", "127.0.0.1", "--port", "8765"],
-        cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
-    )
-    for _ in range(60):
-        if server.poll() is not None:
-            raise RuntimeError("Shared VORAX runtime exited before health became ready")
-        try:
-            with urllib.request.urlopen(API + "/health", timeout=3) as response:
-                health = json.loads(response.read().decode())
-                if response.status == 200 and health.get("engine") == "VORAX":
-                    return server, health
-        except Exception:
-            time.sleep(2)
-    server.terminate()
-    raise RuntimeError("Shared VORAX /health did not become ready")
+def discover_world(query: str, page_limit: int = 100) -> dict:
+    """Page through model, Space and Dataset metadata; never request repository files or weights."""
+    encoded = urllib.parse.urlencode({
+        "query": query[:160],
+        "limit": "100",
+        "source": "all",
+    })
+    _, first = request_json(TEACHER_URL, "/teacher/discover?" + encoded, timeout=60)
+    if first.get("status") != "metadata_only" or first.get("weights_downloaded") is not False:
+        raise ConnectorError("Teacher did not confirm metadata-only discovery")
+
+    models = list(first.get("models") or [])
+    resources = list(first.get("resources") or [])
+    source_cursors = dict(first.get("next_cursors") or {})
+    pages_by_source = {"models": 1, "spaces": 1, "datasets": 1}
+    remaining = {}
+
+    for source in ("models", "spaces", "datasets"):
+        cursor = source_cursors.get(source)
+        while cursor and pages_by_source[source] < page_limit:
+            next_query = urllib.parse.urlencode({
+                "query": query[:160],
+                "limit": "100",
+                "source": source,
+                "cursor": cursor,
+            })
+            _, page = request_json(TEACHER_URL, "/teacher/discover?" + next_query, timeout=60)
+            if page.get("status") != "metadata_only" or page.get("weights_downloaded") is not False:
+                raise ConnectorError(f"Teacher {source} pagination did not remain metadata-only")
+            page_resources = page.get("resources") or []
+            resources.extend(page_resources)
+            if source == "models":
+                models.extend(page.get("models") or [])
+            page_cursors = dict(page.get("next_cursors") or {source: page.get("next_cursor")})
+            cursor = page_cursors.get(source)
+            pages_by_source[source] += 1
+        remaining[source] = bool(cursor)
+    return {
+        "status": "metadata_only",
+        "query": query,
+        "models": models,
+        "resources": resources,
+        "models_found": len(models),
+        "resources_found": len(resources),
+        "pages_read": sum(pages_by_source.values()),
+        "pages_by_source": pages_by_source,
+        "pagination_remaining": any(remaining.values()),
+        "pagination_remaining_by_source": remaining,
+        "weights_downloaded": False,
+        "local_model_loaded": False,
+    }
 
 
-def queue_issues(queue_token: str):
-    issues = []
-    for page in range(1, 6):
-        batch = github("GET", f"/repos/{REPO}/issues?state=open&per_page=100&page={page}", queue_token)
-        issues.extend(batch)
-        if len(batch) < 100:
+def choose_teacher_models(models: list[dict], requested: str = "", count: int = 3) -> list[str]:
+    """Choose distinct live chat models across providers; an explicit model is only prioritised."""
+    if not models:
+        raise ConnectorError("Teacher metadata discovery returned no models")
+
+    requested_value = requested.strip()
+    requested_id, separator, requested_provider = requested_value.partition(":")
+    ordered = list(models)
+    if requested_id:
+        ordered.sort(key=lambda item: 0 if str(item.get("id") or "").strip() == requested_id else 1)
+
+    allow_billable = os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"}
+    selected = []
+    selected_model_ids = set()
+    for item in ordered:
+        model_id = str(item.get("id") or "").strip()
+        if not model_id or model_id in selected_model_ids:
+            continue
+        providers = [
+            provider for provider in item.get("providers", [])
+            if isinstance(provider, dict)
+            and str(provider.get("status", "")).casefold() == "live"
+            and str(provider.get("task", "")).casefold() in {"conversational", "text-generation"}
+            and str(provider.get("provider") or "").strip()
+            and (allow_billable or provider.get("is_free") is True)
+        ]
+        if requested_id and model_id == requested_id and separator:
+            providers = [
+                provider for provider in providers
+                if str(provider.get("provider") or "").casefold() == requested_provider.casefold()
+            ]
+        if not providers:
+            continue
+        providers.sort(
+            key=lambda provider: (
+                float(provider.get("throughput") or 0),
+                -float(provider.get("first_token_latency_ms") or 1e9),
+            ),
+            reverse=True,
+        )
+        provider = str(providers[0]["provider"]).strip()
+        selected.append(f"{model_id}:{provider}")
+        selected_model_ids.add(model_id)
+        if len(selected) >= count:
             break
-    found = []
-    for issue in issues:
-        if "pull_request" in issue or not str(issue.get("title", "")).startswith("[VORAX-X]"):
-            continue
-        body = issue.get("body") or ""
-        if MARKER not in body:
-            continue
-        raw = body.split(MARKER, 1)[1].split("\n\nDo not put", 1)[0].strip()
-        try:
-            item = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if item.get("version") == "vorax-x-queue/v1" and item.get("status") == "queued":
-            found.append((issue, item))
-    return found
+
+    if requested_id and not any(model_ref.split(":", 1)[0] == requested_id for model_ref in selected):
+        raise ConnectorError(
+            "The requested model/provider is not live in the current metadata catalogue"
+        )
+    if not selected:
+        raise ConnectorError("No live conversational Inference Provider models were found")
+    return selected
 
 
-def update_queue(issue, payload, queue_token, status, result=None):
-    payload["status"] = status
-    payload["last_attempt_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    payload["worker"] = "kaggle-child"
-    if result:
-        payload["result_summary"] = result
-    body = MARKER + "\n" + json.dumps(payload, ensure_ascii=False, indent=2)
-    github("PATCH", f"/repos/{REPO}/issues/{issue['number']}", queue_token,
-           {"body": body})
+def ask_remote_teacher(prompt: str, model_id: str, child_key: str) -> dict:
+    _, response = request_json(
+        TEACHER_URL,
+        "/teacher/ask",
+        method="POST",
+        payload={"prompt": prompt[:12000], "model_id": model_id},
+        child_key=child_key,
+        timeout=120,
+    )
+    if response.get("remote_inference") is not True:
+        raise ConnectorError(f"Teacher {model_id} did not confirm remote Inference Provider execution")
+    if response.get("kaggle_t4_used") is not False:
+        raise ConnectorError(f"Teacher {model_id} returned incorrect Kaggle GPU provenance")
+    if response.get("weights_downloaded") is not False:
+        raise ConnectorError(f"Teacher {model_id} reported a model weight download")
+    if not isinstance(response.get("response"), str) or not response["response"].strip():
+        raise ConnectorError(f"Teacher {model_id} returned no teaching response")
+    return response
+
+def _candidate_from_teacher(response: str) -> dict:
+    text = response.strip()
+    fence = chr(96) * 3
+    if text.startswith(fence):
+        text = re.sub(r"^" + fence + r"(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*" + fence + r"$", "", text)
+    try:
+        candidate = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConnectorError("Teacher response was not a JSON V-Lang proposal") from exc
+    if isinstance(candidate, dict) and isinstance(candidate.get("candidate"), dict):
+        candidate = candidate["candidate"]
+    if not isinstance(candidate, dict):
+        raise ConnectorError("Teacher response did not contain one V-Lang method")
+    return candidate
 
 
-def main():
-    report = {
-        "child": "kaggle-child",
-        "runtime": "starting",
-        "gpu_telemetry": gpu_telemetry(),
-        "tasks": [],
-        "vault_sync": {"status": "not_attempted"},
+def home_duplicate_reason(index: dict, candidate: dict) -> str | None:
+    candidate_id = candidate.get("id")
+    domain = str(candidate.get("domain", "")).casefold()
+    task = str(candidate.get("task", "")).casefold()
+    triggers = {str(x).casefold() for x in candidate.get("triggers", [])}
+    for known in index["records"]:
+        if known["id"] == candidate_id:
+            return "method_id_exists_in_home"
+        if known["domain"].casefold() == domain and known["task"].casefold() == task:
+            return "method_task_exists_in_home"
+        known_triggers = {str(x).casefold() for x in known["triggers"]}
+        if domain == known["domain"].casefold() and triggers and triggers.intersection(known_triggers):
+            return "method_trigger_exists_in_home"
+    return None
+
+
+def save_report(report: dict) -> None:
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REPORT_PATH.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print("Report:", REPORT_PATH)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run one on-demand VORAX knowledge-gathering pass.")
+    parser.add_argument("--task", default=os.getenv("VORAX_X", ""))
+    parser.add_argument("--model-id", default=os.getenv("VORAX_TEACHER_MODEL", ""))
+    parser.add_argument("--discovery-query", default="")
+    parser.add_argument("--teacher-count", type=int, default=int(os.getenv("VORAX_TEACHER_COUNT", "3")))
+    parser.add_argument("--discovery-pages", type=int, default=int(os.getenv("VORAX_DISCOVERY_PAGES", "100")))
+    args = parser.parse_args()
+
+    if args.teacher_count < 1 or args.teacher_count > 5:
+        raise ConnectorError("--teacher-count must be between 1 and 5")
+    if args.discovery_pages < 1 or args.discovery_pages > 1000:
+        raise ConnectorError("--discovery-pages must be between 1 and 1000")
+
+    report: dict[str, Any] = {
+        "child": CHILD_ID,
+        "status": "starting",
+        "home": {"repository": HOME_REPO, "branch": HOME_BRANCH},
+        "teacher": {"url": TEACHER_URL, "live": False},
+        "runtime": {"url": RUNTIME_URL, "live": False},
+        "discovery": {"status": "not_started"},
+        "knowledge": {"status": "not_requested"},
+        "controls": {
+            "weights_downloaded": False,
+            "local_model_framework_imported": False,
+            "local_model_loaded": False,
+            "media_generation_attempted": False,
+            "automatic_queue_processing": False,
+            "direct_vault_write": False,
+            "home_method_bodies_downloaded": False,
+            "kaggle_gpu_used": False,
+            "billable_inference_allowed": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"},
+            "free_provider_only": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() not in {"1", "true", "yes"},
+        },
+        "secret_use": {},
         "failure": None,
     }
-    server = None
+
     try:
-        if not report["gpu_telemetry"]["available"]:
-            report["runtime"] = "gpu_not_observed"
-            report["failure"] = "No NVIDIA GPU telemetry was observed; no GPU work was claimed"
-            raise RuntimeError(report["failure"])
+        home_read = kaggle_secret("VORAX_HOME_READ_TOKEN", required=True)
+        child_key = kaggle_secret("VORAX_KAGGLE_CHILD_API_KEY", required=True)
 
-        read_token = secret("VORAX_HOME_READ_TOKEN", required=True)
-        queue_token = secret("VORAX_HOME_WRITE_TOKEN", required=True)
-        child_key = secret("VORAX_KAGGLE_CHILD_API_KEY", required=True)
-        proposal_token = secret("VORAX_CHILD_PROPOSAL_TOKEN") or queue_token
-        hf_vault = secret("HF_VAULT_TOKEN")
-        teacher_key = secret("LEGEND_TEACHER_API_KEY")
-        teacher_model = secret("LEGEND_TEACHER_MODEL")
-        hf_inference = secret("HF_INFERENCE_TOKEN")
-        hf_model_token = secret("HF_MODEL_TOKEN")
-        kaggle_image_model = secret("VORAX_KAGGLE_IMAGE_MODEL")
-        kaggle_image_steps = secret("VORAX_KAGGLE_IMAGE_STEPS")
-
-        clone_home(read_token)
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", str(ROOT / "requirements.txt")],
-            check=True, timeout=600,
-        )
-        env = os.environ.copy()
-        env.update({
-            "PYTHONPATH": str(ROOT),
-            "PORT": "8765",
-            "VORAX_CHILD_ID": "kaggle-child",
-            "VORAX_CHILD_ROLE": "kaggle",
-            "VORAX_CHILD_API_KEY": child_key,
-            "LEGEND_HOME_REPO": REPO,
-            "LEGEND_HOME_BRANCH": "main",
-            "LEGEND_HOME_READ_TOKEN": read_token,
-            "LEGEND_DB_PATH": "/kaggle/working/legend.sqlite3",
-            "LEGEND_ARTIFACT_DIR": "/kaggle/working/artifacts",
-            "LEGEND_AUTO_LEARN": "true",
-            "HF_VAULT_REPO": "Musombi/revelacode-vorax-vault",
-        })
-        if proposal_token:
-            env["LEGEND_GITHUB_TOKEN"] = proposal_token
-        if hf_vault:
-            env["HF_VAULT_TOKEN"] = hf_vault
-        if hf_inference:
-            env["HF_INFERENCE_TOKEN"] = hf_inference
-        if hf_model_token:
-            env["HF_MODEL_TOKEN"] = hf_model_token
-        env["HF_HOME"] = "/kaggle/working/.cache/huggingface"
-        if kaggle_image_model:
-            env["VORAX_KAGGLE_IMAGE_MODEL"] = kaggle_image_model
-        if kaggle_image_steps:
-            env["VORAX_KAGGLE_IMAGE_STEPS"] = kaggle_image_steps
-        if teacher_key and teacher_model:
-            env["LEGEND_TEACHER_API_KEY"] = teacher_key
-            env["LEGEND_TEACHER_MODEL"] = teacher_model
-            teacher_base = secret("LEGEND_TEACHER_BASE_URL")
-            if teacher_base:
-                env["LEGEND_TEACHER_BASE_URL"] = teacher_base
-
-        server, health = start_runtime(env)
-        report["runtime"] = "shared_vorax_healthy"
-        report["health"] = health
-
-        discovery = request_json("POST", "/v1/devour/discover", child_key,
-                                 {"modality": "text", "limit": 5})
-        report["discovery"] = {
-            "status": discovery.get("status"),
-            "models_found": discovery.get("models_found", 0),
-            "weights_downloaded": discovery.get("weights_downloaded", False),
+        # The connector deliberately does not request Home write or Vault credentials.
+        # Runtime alone opens Home PRs and writes to the private Dataset Vault.
+        report["secret_use"] = {
+            "VORAX_HOME_READ_TOKEN": {"available": True, "used_for": "direct_metadata_index_read_only"},
+            "VORAX_HOME_WRITE_TOKEN": {"requested_by_connector": False, "authority": "Runtime_only"},
+            "VORAX_KAGGLE_CHILD_API_KEY": {"available": True, "used_for": "Teacher_and_Runtime_auth"},
+            "HF_VAULT_TOKEN": {"requested_by_connector": False, "authority": "Runtime_only"},
+            "HF_READ_TOKEN": {"requested_by_connector": False, "authority": "Teacher_only"},
+            "LEGEND_TEACHER_API_KEY": {"requested_by_connector": False, "authority": "Teacher_only"},
+            "LEGEND_TEACHER_MODEL": {"requested_by_connector": False, "authority": "configured_on_Teacher_or_cli"},
+            "LEGEND_TEACHER_BASE_URL": {"requested_by_connector": False, "authority": "Teacher_service_URL"},
         }
 
-        from vorax.api import STORE, classify_input_x
+        teacher_code, teacher_health = request_json(TEACHER_URL, "/health")
+        runtime_code, runtime_health = request_json(RUNTIME_URL, "/health")
+        if teacher_code != 200 or teacher_health.get("service") != "teacher":
+            raise ConnectorError("Teacher health identity check failed")
+        if runtime_code != 200 or runtime_health.get("service") != "runtime":
+            raise ConnectorError("Runtime health identity check failed")
+        report["teacher"]["live"] = True
+        report["teacher"]["health"] = teacher_health
+        report["runtime"]["live"] = True
+        report["runtime"]["health"] = runtime_health
 
-        pending_updates = []
-        gpu_packages_installed = False
-        for issue, queued in queue_issues(queue_token):
-            value = str(queued.get("x", "")).strip()
-            task = {
-                "queue_issue": issue.get("number"),
-                "x": value,
-                "method": None,
-                "verification": "not_executed",
-                "provider": None,
-                "pr": None,
-                "artifacts": [],
-                "failure": None,
+        home_index = read_home_metadata_index(home_read)
+        report["home"]["index_methods"] = home_index.get("methods_total")
+        report["home"]["index_content"] = "metadata_only"
+        report["home"]["method_bodies_downloaded"] = False
+
+        query = args.discovery_query.strip()
+        discovery = discover_world(query, page_limit=args.discovery_pages)
+        report["discovery"] = {
+            key: discovery.get(key)
+            for key in (
+                "status", "query", "models_found", "resources_found",
+                "pages_read", "pages_by_source", "pagination_remaining",
+                "pagination_remaining_by_source", "weights_downloaded",
+            )
+        }
+        if not discovery["models"]:
+            raise ConnectorError("No remotely served model metadata was returned by Teacher discovery")
+        if discovery.get("pagination_remaining"):
+            raise ConnectorError(
+                "Hub metadata discovery is incomplete; increase --discovery-pages and rerun before learning"
+            )
+
+        report["status"] = "connector_ready"
+        if not args.task.strip():
+            report["knowledge"] = {
+                "status": "not_requested",
+                "note": "Supply --task or VORAX_X to ask a remote Teacher and propose one method.",
             }
-            queue_status = "worker_error_retry_later"
-            try:
-                if not value or len(value) > 12000:
-                    raise ValueError("Queued X is invalid or exceeds the bounded input size")
-                classification = classify_input_x(value, STORE.all())
-                task["method"] = classification.get("task_type")
-
-                if task["method"] == "3d":
-                    task["verification"] = "unknown"
-                    task["failure"] = "3D generation has no verified local adapter. No 3D artifact was produced."
-                    queue_status = "unknown_3d_adapter_not_implemented"
-
-                elif task["method"] in HEAVY:
-                    if task["method"] in {"image", "logo"} and not gpu_packages_installed:
-                        gpu_requirements = ROOT / "kaggle" / "child" / "requirements-gpu.txt"
-                        subprocess.run(
-                            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
-                             "--no-cache-dir", "-r", str(gpu_requirements)],
-                            check=True, timeout=900,
-                        )
-                        gpu_packages_installed = True
-
-                    result = request_json("POST", "/vorax/x", child_key, {"x": value})
-                    answer = result.get("answer") if isinstance(result, dict) else None
-                    task["result_status"] = result.get("status") if isinstance(result, dict) else "invalid_response"
-
-                    if (
-                        isinstance(answer, dict)
-                        and answer.get("status") == "verified"
-                        and answer.get("provider") == "kaggle-local-diffusers"
-                        and isinstance(answer.get("gpu_telemetry"), dict)
-                        and answer["gpu_telemetry"].get("gpu_used") is True
-                    ):
-                        artifact_id = answer.get("artifact")
-                        if not isinstance(artifact_id, str) or not re.fullmatch(r"[a-f0-9]{32}\.png", artifact_id):
-                            raise RuntimeError("Kaggle GPU returned an invalid artifact identifier")
-                        artifact_root = Path(env["LEGEND_ARTIFACT_DIR"]).resolve()
-                        artifact_path = (artifact_root / artifact_id).resolve()
-                        if artifact_root not in artifact_path.parents or not artifact_path.is_file():
-                            raise RuntimeError("Kaggle GPU artifact is missing or outside the artifact root")
-                        from PIL import Image, ImageStat
-                        with Image.open(artifact_path) as image:
-                            image.verify()
-                        with Image.open(artifact_path) as image:
-                            image.load()
-                            if image.format != "PNG":
-                                raise RuntimeError("Generated artifact is not a PNG")
-                            extrema = ImageStat.Stat(image.convert("RGB")).extrema
-                            if all(low == high for low, high in extrema):
-                                raise RuntimeError("Generated PNG is blank")
-                            dimensions = {"width": image.width, "height": image.height}
-                        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
-                        size = artifact_path.stat().st_size
-                        if answer.get("sha256") != digest or answer.get("size_bytes") != size:
-                            raise RuntimeError("Independent artifact hash or byte-size check did not match the runtime report")
-                        telemetry = answer["gpu_telemetry"]
-                        if not str(telemetry.get("device", "")).startswith("cuda:"):
-                            raise RuntimeError("The reported model device is not CUDA")
-                        if not telemetry.get("gpu_name"):
-                            raise RuntimeError("The actual CUDA GPU name was not recorded")
-
-                        task.update({
-                            "verification": "local_png_verified_pending_vault",
-                            "provider": "kaggle-local-diffusers",
-                            "model_id": answer.get("model_id"),
-                            "gpu_telemetry": telemetry,
-                            "execution_time_ms": answer.get("elapsed_ms"),
-                            "artifact": {
-                                "filename": artifact_id,
-                                "local_path": str(artifact_path),
-                                "format": "png",
-                                "size_bytes": size,
-                                "sha256": digest,
-                                **dimensions,
-                                "independent_verification": "passed",
-                            },
-                        })
-                        queue_status = "verified_local_artifact_pending_vault"
-
-                    else:
-                        reason = (
-                            answer.get("reason") if isinstance(answer, dict)
-                            else result.get("reason") or result.get("message") if isinstance(result, dict)
-                            else "No verified local Kaggle image result was returned"
-                        )
-                        task["verification"] = "blocked_or_unknown_no_artifact"
-                        task["failure"] = str(reason or "Local Kaggle modality adapter unavailable")[:500]
-                        task["provider"] = answer.get("provider") if isinstance(answer, dict) else None
-                        if task["method"] == "image" or task["method"] == "logo":
-                            queue_status = "blocked_local_gpu_adapter"
-                        else:
-                            queue_status = "unknown_local_adapter_not_implemented"
-
-                else:
-                    result = request_json("POST", "/vorax/x", child_key, {"x": value})
-                    task["verification"] = (
-                        "shared_runtime_response_received_not_home_merged"
-                        if result.get("status") == "verified" else "unknown"
-                    )
-                    task["result_status"] = result.get("status")
-                    task["result_summary"] = {
-                        key: result.get(key) for key in ("template_id", "learning", "discovery")
-                        if key in result
-                    }
-                    learning = result.get("learning") or {}
-                    task["pr"] = learning.get("pull_request") or learning.get("pr")
-                    queue_status = "processed_pending_home_validation" if result.get("status") == "verified" else "unknown_no_verified_method"
-
-                report["tasks"].append(task)
-                pending_updates.append((issue, queued, queue_status, task))
-
-            except Exception as exc:
-                task["failure"] = type(exc).__name__ + ": " + str(exc)[:300]
-                task["verification"] = "failed"
-                report["tasks"].append(task)
-                pending_updates.append((issue, queued, "worker_error_retry_later", task))
-
-        if hf_vault:
-            try:
-                report["vault_sync"] = request_json("POST", "/v1/vault/sync", child_key, {})
-            except Exception as exc:
-                report["vault_sync"] = {"status": "failed", "failure": type(exc).__name__}
         else:
-            report["vault_sync"] = {"status": "not_configured", "verification": "not_synced"}
+            teacher_models = choose_teacher_models(
+                discovery["models"],
+                args.model_id,
+                count=args.teacher_count,
+            )
+            if not teacher_models:
+                raise ConnectorError("No text-capable models were found in the metadata catalogue")
+            user_x = args.task.strip()[:12000]
+            base_prompt = (
+                "Teach VORAX how to perform the user's task as one bounded V-Lang v1 method. "
+                "Use only approved V-Lang operations or a registered CALL TOOL contract. "
+                "Include at least two executable tests with exact expected outputs. "
+                "Do not invent tool outputs or claim media has been generated. No code, shell, URLs, "
+                "weights, secrets, or model configuration. The trusted VORAX Runtime will revalidate "
+                "every test. Do not reproduce an existing method if the Home index already covers it.\n"
+                "User X:\n" + user_x
+            )
 
-        vault_proofs = (
-            report.get("vault_sync", {}).get("artifact_proofs", [])
-            if isinstance(report.get("vault_sync"), dict) else []
-        )
-        for issue, queued, queue_status, task in pending_updates:
-            artifact = task.get("artifact")
-            if artifact and queue_status == "verified_local_artifact_pending_vault":
-                proof = next(
-                    (item for item in vault_proofs if item.get("sha256") == artifact["sha256"]),
-                    None,
+            # First model proposes; intermediate models critique; the last synthesizes one candidate.
+            consultations = []
+            initial_model = teacher_models[0]
+            initial_response = ask_remote_teacher(base_prompt, initial_model, child_key)
+            consultations.append({
+                "model_id": initial_model,
+                "provider_used": initial_response.get("provider_used"),
+                "remote_inference": True,
+                "kaggle_t4_used": False,
+                "role": "initial_proposer",
+            })
+            initial_candidate = _candidate_from_teacher(initial_response["response"])
+            candidate = initial_candidate
+            final_model = initial_model
+            final_response = initial_response
+
+            reviews = []
+            for reviewer_model in teacher_models[1:-1]:
+                review_prompt = (
+                    "Review this proposed V-Lang method for correctness, task coverage, safe bounded "
+                    "operations and executable test quality. Return concise JSON with keys "
+                    "issues, improvements, test_gaps. Do not return code or claim execution.\n"
+                    "User X:\n" + user_x + "\nProposal:\n"
+                    + json.dumps(initial_candidate, ensure_ascii=False)[:6500]
                 )
-                if proof and proof.get("path") == "artifacts/images/" + artifact["sha256"] + ".png":
-                    artifact["vault_path"] = proof["path"]
-                    task["verification"] = "png_verified_and_vaulted"
-                    queue_status = "verified_artifact_vaulted"
-                else:
-                    task["verification"] = (
-                        "png_verified_vault_sync_failed"
-                        if report.get("vault_sync", {}).get("status") == "failed"
-                        else "png_verified_but_vault_proof_missing"
-                    )
-                    queue_status = "verified_local_artifact_not_vaulted"
-            try:
-                update_queue(issue, queued, queue_token, queue_status, task)
-            except Exception as exc:
-                task["queue_update_failure"] = type(exc).__name__ + ": " + str(exc)[:180]
+                review = ask_remote_teacher(review_prompt, reviewer_model, child_key)
+                reviews.append({
+                    "model_id": reviewer_model,
+                    "review": review["response"][:3500],
+                })
+                consultations.append({
+                    "model_id": reviewer_model,
+                    "provider_used": review.get("provider_used"),
+                    "remote_inference": True,
+                    "kaggle_t4_used": False,
+                    "role": "independent_reviewer",
+                })
+
+            if len(teacher_models) > 1:
+                final_model = teacher_models[-1]
+                synthesis_prompt = (
+                    "Synthesize the independent teacher proposal and reviewer findings into exactly "
+                    "one final JSON V-Lang v1 method object with keys version,id,domain,task,triggers,"
+                    "inputs,steps,result,tests,provenance. Use only approved V-Lang operations or "
+                    "registered CALL TOOL contracts. Include at least two executable tests with exact "
+                    "expected outputs. No code, shell, arbitrary URLs, secrets, weights, model configs, "
+                    "fake tool results, or false media claims. The trusted VORAX Runtime revalidates it.\n"
+                    "User X:\n" + user_x
+                    + "\nInitial proposal:\n" + json.dumps(initial_candidate, ensure_ascii=False)[:5000]
+                    + "\nIndependent reviews:\n" + json.dumps(reviews, ensure_ascii=False)[:5000]
+                )
+                final_response = ask_remote_teacher(synthesis_prompt, final_model, child_key)
+                candidate = _candidate_from_teacher(final_response["response"])
+                consultations.append({
+                    "model_id": final_model,
+                    "provider_used": final_response.get("provider_used"),
+                    "remote_inference": True,
+                    "kaggle_t4_used": False,
+                    "role": "method_synthesizer",
+                })
+
+            report["knowledge"]["teacher_panel"] = {
+                "requested_count": args.teacher_count,
+                "consulted_count": len(consultations),
+                "consultations": consultations,
+                "all_remote": all(item["remote_inference"] is True for item in consultations),
+                "kaggle_t4_used": False,
+            }
+            duplicate = home_duplicate_reason(home_index, candidate)
+            if duplicate:
+                report["knowledge"].update({
+                    "status": "already_in_home",
+                    "reason": duplicate,
+                    "method_id": candidate.get("id"),
+                })
+            else:
+                status, runtime_result = request_json(
+                    RUNTIME_URL,
+                    "/vorax/verify",
+                    method="POST",
+                    payload={
+                        "method": candidate,
+                        "teacher_response": final_response["response"],
+                        "teacher_attestation": final_response["attestation"],
+                        "x": user_x,
+                        "teacher_model_id": final_model,
+                        "child_id": CHILD_ID,
+                        "api_key": child_key,
+                    },
+                    child_key=child_key,
+                    timeout=180,
+                )
+                report["knowledge"].update({
+                    "status": runtime_result.get("status"),
+                    "teacher_model_id": final_model,
+                    "provider_used": final_response.get("provider_used"),
+                    "remote_inference": final_response.get("remote_inference"),
+                    "kaggle_t4_used": final_response.get("kaggle_t4_used"),
+                    "method_id": runtime_result.get("method"),
+                    "method_sha256": runtime_result.get("method_sha256"),
+                    "verification": runtime_result.get("verification"),
+                    "vault": runtime_result.get("vault"),
+                    "home_submission": runtime_result.get("home_submission"),
+                    "http_status": status,
+                })
+                if runtime_result.get("status") not in {"verified", "unknown", "blocked"}:
+                    raise ConnectorError("Runtime returned an unsupported verification status")
+
+        if runtime_health.get("ready") is not True:
+            report["status"] = "connector_degraded"
+            report["failure"] = "Runtime is reachable but health reports ready=false; inspect its Vault/Home readiness."
+        return_code = 0 if report["status"] in {"connector_ready", "connector_degraded"} else 1
 
     except Exception as exc:
-        report["failure"] = type(exc).__name__ + ": " + str(exc)[:250]
-        print("VORAX Kaggle Child:", report["failure"])
+        report["status"] = "connector_blocked"
+        report["failure"] = type(exc).__name__ + ": " + str(exc)[:400]
+        return_code = 1
     finally:
-        if server and server.poll() is None:
-            server.terminate()
-            try:
-                server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                server.kill()
-        REPORT.parent.mkdir(parents=True, exist_ok=True)
-        REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print("Report written:", REPORT)
-    if report["failure"]:
-        raise SystemExit(1)
+        save_report(report)
+
+    return return_code
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

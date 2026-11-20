@@ -1,7 +1,8 @@
 """GitHub Home sync and child-to-Home pull request submission."""
 from __future__ import annotations
 import base64,json,os,re,time,urllib.error,urllib.parse,urllib.request,uuid
-from .vlang import dump_record,parse_document
+from .vlang import dump_record
+from .home_index import append_method, parse_method_index
 
 class GitHubHomeError(RuntimeError): pass
 
@@ -19,57 +20,92 @@ def _api(method,path,token=None,body=None):
         raise GitHubHomeError(f"GitHub API {method} failed ({exc.code}): {detail[:400]}") from exc
     except urllib.error.URLError as exc: raise GitHubHomeError("GitHub API unavailable: "+type(exc).__name__) from exc
 
-def sync_library(repo: str,branch: str="main",token: str="")->list[dict]:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repo): raise ValueError("Invalid Home repository")
-    tree=_api("GET",f"/repos/{repo}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1",token)
-    if tree.get("truncated"): raise GitHubHomeError("Home tree is truncated; refusing a partial sync")
-    paths=[x["path"] for x in tree.get("tree",[]) if x.get("type")=="blob" and x.get("path","").startswith("templates/library/") and x["path"].endswith((".vlang",".tlang"))]
-    result=[]
-    for path in paths:
-        try:
-            content=_api("GET",f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}?ref={urllib.parse.quote(branch,safe='')}",token)
-            if content.get("encoding")!="base64": raise GitHubHomeError(f"Home content encoding is not base64: {path}")
-            result.extend(parse_document(base64.b64decode(content["content"]).decode("utf-8")))
-        except Exception as exc: raise GitHubHomeError(f"Home sync rejected {path}: {type(exc).__name__}") from exc
-    return result
-
-def submit_template(repo: str,branch: str,child_id: str,template: dict,token: str)->dict:
-    if not token: raise GitHubHomeError("LEGEND_GITHUB_TOKEN is not configured on this child")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,39}",child_id): raise ValueError("Invalid child ID")
-    record=dict(template); provenance=dict(record.get("provenance",{}))
-    provenance.update({"kind":"teacher" if provenance.get("kind")=="teacher" else "manual","child_id":child_id})
-    record["provenance"]=provenance; content=dump_record(record)
-    slug=re.sub(r"[^a-z0-9_-]+","_",record["id"].lower()).strip("_")
-    path=f"templates/library/children/{child_id}_{slug}.vlang"
-    new_branch=f"child/{child_id}/{int(time.time())}-{uuid.uuid4().hex[:8]}"
-    ref=_api("GET",f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(branch,safe='')}",token)
-    _api("POST",f"/repos/{repo}/git/refs",token,{"ref":"refs/heads/"+new_branch,"sha":ref["object"]["sha"]})
-    encoded=base64.b64encode(content.encode()).decode("ascii")
-    _api("PUT",f"/repos/{repo}/contents/{urllib.parse.quote(path,safe='/')}",token,
-         {"message":f"vorax: child {child_id} proposes {record['id']}","content":encoded,"branch":new_branch})
-    pr=_api("POST",f"/repos/{repo}/pulls",token,
-       {"title":f"VORAX V-Lang proposal: {record['id']}",
-        "body":f"Automated V-Lang proposal from child {child_id}. Home will verify schema, safety, duplicates, and executable tests.",
-        "head":new_branch,"base":branch})
-    return {"pull_request":pr["html_url"],"number":pr["number"],"branch":new_branch,"template_id":record["id"],"file":path}
-
-
-def enqueue_kaggle_x(repo: str, value: str, token: str) -> dict:
-    """Queue heavy X for the ephemeral Kaggle worker; this function does not execute it."""
-    if not token:
-        raise GitHubHomeError("LEGEND_GITHUB_TOKEN is not configured for queue creation")
-    if not isinstance(value, str) or not value.strip() or len(value) > 12000:
-        raise ValueError("X must be non-empty text of at most 12000 characters")
-    if re.search(r"(?i)(api[_ -]?key|password|secret|token)\s*[:=]\s*\S+", value):
-        raise ValueError("X looks like it may contain a credential; remove it before queuing")
+def fetch_method_index(repo: str, branch: str = "main", token: str = "") -> dict:
+    """Read only the metadata index from Home. Never fetch V-Lang method bodies."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise ValueError("Invalid Home repository")
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    payload = {"version": "vorax-x-queue/v1", "status": "queued", "x": value,
-               "queued_at": stamp, "source": "koyeb_input_x"}
-    body = ("<!-- VORAX_X_QUEUE_V1 -->\n" + json.dumps(payload, ensure_ascii=False, indent=2) +
-            "\n\nDo not put passwords, API keys, private records, or sensitive personal data in this queue.")
-    issue = _api("POST", f"/repos/{repo}/issues", token,
-                 {"title": "[VORAX-X] " + time.strftime("%Y%m%d-%H%M%S", time.gmtime()), "body": body})
-    return {"number": issue.get("number"), "url": issue.get("html_url"),
-            "status": "queued", "destination_child": "kaggle-child", "verification": "not_executed"}
+    path = f"/repos/{repo}/contents/templates/library/index.json?ref={urllib.parse.quote(branch, safe='')}"
+    try:
+        blob = _api("GET", path, token)
+    except GitHubHomeError as exc:
+        raise GitHubHomeError("Home metadata index is unavailable; refusing to learn from Home method contents") from exc
+    if blob.get("encoding") != "base64":
+        raise GitHubHomeError("Home method index is not base64 content")
+    try:
+        raw = base64.b64decode(blob["content"], validate=False)
+        return parse_method_index(raw)
+    except Exception as exc:
+        raise GitHubHomeError("Home metadata index failed validation") from exc
+
+def submit_template(repo: str, branch: str, child_id: str, template: dict, token: str) -> dict:
+    """Submit a teacher-derived V-Lang proposal and metadata-only index update as one Home PR."""
+    if not token:
+        raise GitHubHomeError("VORAX_HOME_WRITE_TOKEN is not configured on this Runtime")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,39}", child_id):
+        raise ValueError("Invalid child ID")
+    record = dict(template)
+    provenance = dict(record.get("provenance", {}))
+    provenance.update({"kind": "teacher", "child_id": child_id})
+    record["provenance"] = provenance
+    content = dump_record(record)
+
+    # Only a compact metadata index leaves Home; method bodies are never fetched into a Child.
+    home_index = fetch_method_index(repo, branch, token)
+    try:
+        updated_index = append_method(home_index, record)
+    except ValueError as exc:
+        raise GitHubHomeError("Home metadata index reports a duplicate method: " + str(exc)) from exc
+
+    slug = re.sub(r"[^a-z0-9_-]+", "_", record["id"].lower()).strip("_")
+    path = f"templates/library/children/{child_id}_{slug}.vlang"
+    new_branch = f"child/{child_id}/{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    ref = _api("GET", f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(branch, safe='')}", token)
+    _api("POST", f"/repos/{repo}/git/refs", token, {
+        "ref": "refs/heads/" + new_branch,
+        "sha": ref["object"]["sha"],
+    })
+
+    encoded_method = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    _api("PUT", f"/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}", token, {
+        "message": f"vorax: child {child_id} proposes {record['id']}",
+        "content": encoded_method,
+        "branch": new_branch,
+    })
+
+    index_path = "templates/library/index.json"
+    base_index_blob = _api(
+        "GET",
+        f"/repos/{repo}/contents/{index_path}?ref={urllib.parse.quote(branch, safe='')}",
+        token,
+    )
+    encoded_index = base64.b64encode(
+        (json.dumps(updated_index, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    ).decode("ascii")
+    index_update = {
+        "message": f"vorax: update Home metadata index for {record['id']}",
+        "content": encoded_index,
+        "branch": new_branch,
+    }
+    if base_index_blob.get("sha"):
+        index_update["sha"] = base_index_blob["sha"]
+    _api("PUT", f"/repos/{repo}/contents/{index_path}", token, index_update)
+
+    pr = _api("POST", f"/repos/{repo}/pulls", token, {
+        "title": f"VORAX V-Lang proposal: {record['id']}",
+        "body": (
+            f"Knowledge proposal from Child {child_id}. The PR contains a testable V-Lang method "
+            "and its metadata-only Home index update. Home validates schema, safety, duplicates, "
+            "index integrity, and executable tests. No Child self-certification is accepted."
+        ),
+        "head": new_branch,
+        "base": branch,
+    })
+    return {
+        "pull_request": pr["html_url"],
+        "number": pr["number"],
+        "branch": new_branch,
+        "template_id": record["id"],
+        "file": path,
+        "index_file": index_path,
+        "home_authority": "pending_review",
+    }

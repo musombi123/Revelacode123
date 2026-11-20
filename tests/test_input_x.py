@@ -29,76 +29,21 @@ class InputXTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(classify_input_x(value, HOME_VLANG)["task_type"], expected)
 
-    def test_identity_is_verified_from_home_without_a_teacher_or_tool(self):
-        result = handle_input_x("hello, who are you", HOME_VLANG)
+    def test_identity_is_verified_without_loading_home_method_bodies(self):
+        from vorax.builtins import handle_builtin_input
+        result = handle_builtin_input("hello, who are you")
         self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["method"], "runtime.identity")
         self.assertIn("I am VORAX", result["answer"])
-        self.assertNotIn("model", result)
+        self.assertIs(result["verification"]["home_method_body_loaded"], False)
 
-    def test_media_requests_use_the_home_call_tool_method(self):
-        calls = []
-        def verified_tool(name, arguments):
-            calls.append((name, arguments))
-            return {
-                "status": "verified", "verified": True, "tool": name,
-                "artifact": "test-only-artifact", "mime_type": "application/x-test",
-            }
-        examples = [
-            ("generate music", "music.generate", "music.generate"),
-            ("generate image of a cat", "image.generate", "image.generate"),
-            ("generate video of a triangle", "video.generate", "video.generate"),
-            ("make me a logo", "image.generate", "logo.generate"),
-        ]
-        for value, expected_tool, expected_template in examples:
-            with self.subTest(value=value):
-                result = handle_input_x(value, HOME_VLANG, tool_executor=verified_tool)
-                self.assertEqual(result["status"], "verified")
-                self.assertEqual(result["tool"], expected_tool)
-                self.assertEqual(result["template_id"], expected_template)
-        self.assertEqual(len(calls), 4)
-
-    def test_audio_and_translation_route_through_registered_tools(self):
-        calls = []
-        def verified_tool(name, arguments):
-            calls.append(name)
-            return {"status": "verified", "verified": True, "tool": name}
-        speech = handle_input_x("make a voice note", HOME_VLANG, tool_executor=verified_tool)
-        translation = handle_input_x("translate this to Swahili", HOME_VLANG, tool_executor=verified_tool)
-        self.assertEqual(speech["status"], "verified")
-        self.assertEqual(translation["status"], "verified")
-        self.assertEqual(calls, ["audio.tts", "translate"])
-
-    def test_unverified_tool_result_becomes_unknown(self):
-        def failed_tool(name, arguments):
-            return {"status": "unknown", "verified": False, "reason": "provider unavailable"}
-        result = handle_input_x("generate music", HOME_VLANG, tool_executor=failed_tool)
+    def test_unknown_runtime_input_is_not_resolved_from_home_method_bodies(self):
+        from vorax.builtins import handle_builtin_input
+        result = handle_builtin_input("build a complex irrigation controller")
         self.assertEqual(result["status"], "unknown")
         self.assertIsNone(result["answer"])
 
-    def test_general_code_generation_is_unknown_but_arithmetic_is_bounded_code(self):
-        generation = classify_input_x("write code", HOME_VLANG)
-        arithmetic = classify_input_x("8 * 7", HOME_VLANG)
-        self.assertEqual(generation["task_type"], "code")
-        self.assertIsNone(generation["tool"])
-        self.assertEqual(arithmetic["tool"], "code.execute")
-        self.assertEqual(arithmetic["task_type"], "code")
-        result = handle_input_x("write code", HOME_VLANG)
-        self.assertEqual(result["status"], "unknown")
-        self.assertIsNone(result["answer"])
-
-    def test_unimplemented_3d_and_instruction_tasks_remain_unknown(self):
-        for value in ("make a 3D environment", "give me instructions to repair a pump"):
-            result = handle_input_x(value, HOME_VLANG)
-            self.assertEqual(result["status"], "unknown")
-            self.assertIsNone(result["answer"])
-
-    def test_vlang_round_trip_writes_vlang_version(self):
-        record = dict(next(item for item in HOME_VLANG if item["id"] == "greeting.identity"))
-        encoded = dump_record(record)
-        self.assertIn('"version":"vlang/1"', encoded)
-        self.assertEqual(parse_document(encoded)[0]["id"], "greeting.identity")
-
-    def test_single_input_http_handler_uses_vorax_route(self):
+    def test_single_input_http_handler_uses_vorax_route_without_home_sync(self):
         routes = {route.path: route.methods for route in vorax.api.app.routes}
         self.assertIn("/vorax/x", routes)
         self.assertIn("POST", routes["/vorax/x"])
@@ -108,25 +53,26 @@ class InputXTests(unittest.TestCase):
             "query_string": b"", "headers": [],
             "client": ("testclient", 12345), "server": ("testserver", 80),
         }
-        with patch.object(vorax.api, "_refresh_home_catalog", return_value={"status": "synced"}):
+        with patch.object(vorax.api, "actor", return_value="kaggle-child"), \
+             patch.object(vorax.api, "_home_metadata_index", return_value=None):
             result = vorax.api.vorax_input_x({"x": "hello, who are you"}, Request(scope))
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["engine"], "VORAX")
-        self.assertEqual(result["classification"]["classifier_template"], "input.classifier")
+        self.assertEqual(result["method"], "runtime.identity")
+        self.assertIs(result["verification"]["home_method_bodies_loaded"], False)
 
-    def test_tool_task_requires_registered_child_or_admin_authentication(self):
+    def test_vorax_input_x_requires_registered_child_authentication(self):
         scope = {
             "type": "http", "http_version": "1.1", "method": "POST",
             "scheme": "http", "path": "/vorax/x", "raw_path": b"/vorax/x",
             "query_string": b"", "headers": [],
             "client": ("testclient", 12345), "server": ("testserver", 80),
         }
-        with patch.object(vorax.api, "_refresh_home_catalog", return_value={"status": "synced"}), \
-             patch.object(vorax.api, "CHILD_ID", ""), \
+        with patch.object(vorax.api, "CHILD_ID", ""), \
              patch.object(vorax.api, "CHILD_KEY", ""), \
              patch.object(vorax.api, "ADMIN_KEY", ""):
             with self.assertRaises(HTTPException) as error:
-                vorax.api.vorax_input_x({"x": "generate image of a cat"}, Request(scope))
+                vorax.api.vorax_input_x({"x": "hello, who are you"}, Request(scope))
         self.assertEqual(error.exception.status_code, 403)
 
     def test_unknown_call_tool_name_is_rejected(self):
