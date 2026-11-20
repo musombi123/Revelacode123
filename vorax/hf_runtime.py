@@ -461,7 +461,6 @@ def health():
         "home_read_token": bool(HOME_READ_TOKEN),
         "home_write_token": bool(HOME_WRITE_TOKEN),
         "vault_token": bool(os.getenv("HF_VAULT_TOKEN", "").strip()),
-        "inference_provider_token": bool(os.getenv("HF_INFERENCE_TOKEN", "").strip()),
         "teacher_attestation_key": len(os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()) >= 32,
     }
     return {
