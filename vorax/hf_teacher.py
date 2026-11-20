@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import concurrent.futures
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -93,38 +94,99 @@ def health():
     }
 
 
-@app.get("/teacher/discover")
-def discover(
-    query: str = Query(default="", max_length=160),
-    limit: int = Query(default=10, ge=1, le=30),
-):
-    """Return Hub catalog metadata only; this route never fetches model files."""
+def _next_cursor(headers: dict) -> str | None:
+    link = headers.get("Link") or headers.get("link") or ""
+    match = re.search(r'<[^>]*[?&]cursor=([^&>]+)[^>]*>;\s*rel="next"', link)
+    return urllib.parse.unquote(match.group(1)) if match else None
+
+
+def _metadata_item(item: dict, source_type: str) -> dict | None:
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or not item_id:
+        return None
+    card = item.get("cardData") if isinstance(item.get("cardData"), dict) else {}
+    description = (
+        card.get("description")
+        or card.get("summary")
+        or item.get("description")
+        or ""
+    )
+    return {
+        "id": item_id,
+        "source_type": source_type,
+        "tags": [str(tag)[:100] for tag in (item.get("tags") or []) if isinstance(tag, (str, int))][:40],
+        "description": str(description)[:1000],
+        "downloads": int(item.get("downloads") or 0),
+        "likes": int(item.get("likes") or 0),
+        "pipeline_tag": item.get("pipeline_tag"),
+        "library_name": item.get("library_name"),
+        "sdk": item.get("sdk"),
+    }
+
+
+def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None):
+    if kind not in {"models", "spaces", "datasets"}:
+        raise HTTPException(422, "source must be models, spaces, datasets, or all")
     params = {"limit": str(limit), "sort": "downloads", "direction": "-1"}
     if query.strip():
         params["search"] = query.strip()
-    url = HF_MODELS_API + "?" + urllib.parse.urlencode(params)
-    payload, _ = _http_json(url, token=os.getenv("HF_READ_TOKEN", "").strip(), timeout=20)
+    if cursor:
+        params["cursor"] = cursor
+    url = f"https://huggingface.co/api/{kind}?" + urllib.parse.urlencode(params)
+    payload, headers = _http_json(
+        url,
+        token=os.getenv("HF_READ_TOKEN", "").strip(),
+        timeout=25,
+    )
     if not isinstance(payload, list):
-        raise HTTPException(502, "Hugging Face model discovery returned an unexpected response")
-    models = []
+        raise HTTPException(502, f"Hugging Face {kind} discovery returned an unexpected response")
+    rows = []
     for item in payload[:limit]:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            continue
-        tags = item.get("tags") if isinstance(item.get("tags"), list) else []
-        models.append({
-            "id": item["id"],
-            "tags": [str(tag)[:100] for tag in tags[:40]],
-            "downloads": int(item.get("downloads") or 0),
-            "likes": int(item.get("likes") or 0),
-        })
+        if isinstance(item, dict):
+            row = _metadata_item(item, kind[:-1] if kind.endswith("s") else kind)
+            if row:
+                rows.append(row)
+    return rows, _next_cursor(headers)
+
+
+@app.get("/teacher/discover")
+def discover(
+    query: str = Query(default="", max_length=160),
+    limit: int = Query(default=20, ge=1, le=100),
+    source: str = Query(default="all", pattern="^(models|spaces|datasets|all)$"),
+    cursor: str | None = Query(default=None, max_length=2000),
+):
+    """Discover Hub model/service/data metadata only. No file, config or weight is downloaded."""
+    kinds = ("models", "spaces", "datasets") if source == "all" else (source,)
+    found = {}
+    cursors = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            pending = {
+                kind: pool.submit(_discover_kind, kind, query, limit, cursor if kind == "models" else None)
+                for kind in kinds
+            }
+            for kind, future in pending.items():
+                found[kind], cursors[kind] = future.result()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "Hugging Face metadata discovery failed: " + type(exc).__name__) from exc
+
+    models = found.get("models", [])
+    resources = [item for kind in kinds for item in found.get(kind, [])]
     return {
         "status": "metadata_only",
+        "query": query,
+        "sources_searched": list(kinds),
         "models": models,
+        "resources": resources,
         "models_found": len(models),
+        "resources_found": len(resources),
+        "next_cursor": cursors.get("models"),
         "weights_downloaded": False,
         "local_model_loaded": False,
     }
-
 
 @app.post("/teacher/ask")
 def ask(
