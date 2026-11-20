@@ -297,7 +297,7 @@ def main() -> int:
         "knowledge": {"status": "not_requested"},
         "controls": {
             "weights_downloaded": False,
-            "diffusers_imported": False,
+            "local_model_framework_imported": False,
             "local_model_loaded": False,
             "media_generation_attempted": False,
             "automatic_queue_processing": False,
