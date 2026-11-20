@@ -23,11 +23,11 @@ Authentication uses the Kaggle Child identity/key plus server-side GitHub Home a
 - Runtime verifies the Teacher's HMAC-signed remote response, timestamp, model ID, provider flags and response hash, then checks that the Child's submitted method is exactly the method in that signed response.
 - A passing candidate is stored only under `vlang/pending/` in the existing private Dataset Vault.
 - A Home PR includes the proposed V-Lang method and a metadata-only index update. Only Home validates/merges it.
-- After merge, Runtime may promote the candidate already in Vault pending to `vlang/verified/` when Home's index includes its ID. Runtime never downloads the method body from Home.
+- After merge, Runtime may promote the candidate already in Vault pending to `vlang/verified/` when Home's index contains the same ID, task metadata and canonical method SHA-256. Runtime never downloads the method body from Home.
 - The Runtime does not merge PRs and does not certify GO.
 - Artifact SHA-256 is returned only when an actual verified artifact result includes a digest. No placeholder digest is created.
 
-The authenticated `GET /vorax/home-index` route exposes only method IDs, domains, task summaries and triggers. It never returns executable V-Lang method bodies.
+The authenticated `GET /vorax/home-index` route exposes only method IDs, domains, task summaries, triggers and canonical method SHA-256 digests. It never returns executable V-Lang method bodies.
 
 ## Weight and media policy
 
