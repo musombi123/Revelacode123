@@ -13,11 +13,12 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
+from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .builtins import handle_builtin_input
+from .builtins import execute_learned_input, handle_builtin_input
 from .github_home import GitHubHomeError, fetch_method_index, submit_template
 from .home_index import find_duplicate
 from .store import TemplateStore
@@ -28,8 +29,10 @@ from .vault import (
     pending_duplicate_reason,
     promote_pending_home_methods,
     write_pending_method,
+    write_verified_artifact_to_vault,
 )
 from .vlang import TemplateError, dump_record, validate_template
+from .tools import ARTIFACT_ROOT, execute_tool_dict
 
 HOME_REPO = os.getenv("VORAX_HOME_REPO", "musombi123/Revelacode123")
 HOME_BRANCH = os.getenv("VORAX_HOME_BRANCH", "main")
@@ -46,7 +49,7 @@ TEACHER_MODEL = os.getenv("VORAX_TEACHER_MODEL", "").strip()
 LOGGER = logging.getLogger("vorax.runtime-service")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-# This store contains Child rejection counters only. Home method bodies are never loaded here.
+# This store contains rejection counters and only Child-originated methods whose Home approval was confirmed through the metadata index.
 STORE = TemplateStore(os.getenv("VORAX_DB_PATH", "/tmp/vorax-runtime.sqlite3"))
 _HOME_INDEX = None
 _HOME_INDEX_AT = 0.0
@@ -127,6 +130,25 @@ def _refresh_home_index(force: bool = False) -> tuple[dict | None, dict]:
         }
     _HOME_INDEX_AT = time.monotonic()
     return _HOME_INDEX, dict(_HOME_INDEX_STATUS)
+
+
+def _reconcile_home_methods(home_index: dict) -> dict:
+    """Load only Child-originated method bytes already in Vault pending after Home confirms their metadata."""
+    result = promote_pending_home_methods(home_index)
+    methods = result.pop("promoted_methods", [])
+    loaded_ids = []
+    if not isinstance(methods, list):
+        raise VaultError("Vault reconciliation returned an invalid promoted method list")
+    for record in methods:
+        if not isinstance(record, dict):
+            raise VaultError("Vault reconciliation returned a malformed V-Lang method")
+        # These bytes came from the Runtime-written Vault pending area, never from GitHub Home.
+        STORE.add(record)
+        loaded_ids.append(record["id"])
+    result["methods_loaded_into_runtime"] = len(loaded_ids)
+    result["loaded_method_ids"] = loaded_ids
+    return result
+
 
 def _artifact_sha256(result: dict) -> str | None:
     answer = result.get("answer")
@@ -263,7 +285,7 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
     try:
         # On a real learning/verification request, reconcile earlier pending methods
         # whose IDs and metadata have since appeared in Home. No Home method body is fetched.
-        home_reconciliation = promote_pending_home_methods(home_index)
+        home_reconciliation = _reconcile_home_methods(home_index)
     except VaultError as exc:
         raise HTTPException(503, "Runtime could not reconcile Home-approved Vault methods: " + str(exc)) from exc
     duplicate = find_duplicate(home_index, record)
@@ -576,7 +598,7 @@ def reconcile_vault(
     if index is None:
         raise HTTPException(503, "Home metadata-only index is unavailable")
     try:
-        result = promote_pending_home_methods(index)
+        result = _reconcile_home_methods(index)
     except VaultError as exc:
         raise HTTPException(503, "Vault reconciliation failed: " + str(exc)) from exc
     _log(
