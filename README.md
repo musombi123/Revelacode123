@@ -25,7 +25,9 @@ The controller cron is `17,47 * * * *`. It does not run VORAX itself. It probes 
 - Koyeb handles light deterministic/text tasks through the shared runtime.
 - Heavy modalities classified as image, logo, music, video, speech/audio or 3D are placed in a private GitHub Home queue. The response is `queued` and `verification=not_executed`; queuing is not execution.
 - Kaggle reads queued X while a kernel session is available, checks local GPU telemetry with `nvidia-smi`, starts the shared runtime, and records a worker report.
-- Kaggle currently includes the research/queue worker and model-metadata discovery. **The local GPU image/audio/music/video/3D inference adapters are not yet implemented.** Heavy media tasks are marked `blocked_local_gpu_adapter`; the worker does not claim it generated PNG, WAV or MP4 files. The current `vorax.tools` provider adapters use Hugging Face Inference endpoints, which are remote provider execution and do not prove Kaggle GPU usage.
+- Kaggle now has a **code implementation** of a local Diffusers image adapter. It installs the optional `kaggle/child/requirements-gpu.txt` only when an image request is queued, loads the approved model inside the Kaggle session, requires CUDA, checks that the UNet, text encoder and VAE are resident on the observed CUDA device, generates PNG bytes locally, and records model, seed, steps, execution time, GPU name/device, memory telemetry, SHA-256, size and image verification. There is no CPU fallback and no remote inference fallback on the Kaggle GPU route.
+- **This adapter is not yet live-proven.** It has not been run in a real Kaggle GPU session in this repository workflow; no PNG is claimed, and the Children are not certified live. Its first successful execution must produce a non-blank PNG, independently re-hash it in the worker, and appear in the Vault sync proof at `artifacts/images/<sha256>.png`.
+- Local GPU adapters for audio, music and video remain unimplemented and must stay `blocked_local_gpu_adapter` / `UNKNOWN`. 3D remains `UNKNOWN`. The existing default Hugging Face Inference adapters are remote services and their GPU device is not exposed to this runtime; a remote result can never be labelled Kaggle GPU execution.
 
 Do not put passwords, API keys, private records or sensitive personal data in the GitHub X queue. The queue is stored as an issue in this private repository.
 
@@ -84,12 +86,14 @@ Add these Kaggle Notebook secrets in the Kaggle account settings:
 Optional Kaggle Notebook secrets:
 - `VORAX_CHILD_PROPOSAL_TOKEN` (otherwise the Home write token is used)
 - `HF_VAULT_TOKEN`
-- `HF_INFERENCE_TOKEN`
+- `HF_INFERENCE_TOKEN` — optional remote-provider access; it does not prove Kaggle GPU use.
+- `HF_MODEL_TOKEN` — optional Hugging Face Hub read token for downloading the local Diffusers image model if the selected model requires authentication.
+- `VORAX_KAGGLE_IMAGE_MODEL` — optional runtime environment override; defaults to `stable-diffusion-v1-5/stable-diffusion-v1-5`.
 - `LEGEND_TEACHER_API_KEY`
 - `LEGEND_TEACHER_MODEL`
 - `LEGEND_TEACHER_BASE_URL`
 
-Set repository variables `VORAX_KOYEB_URL`, `VORAX_HF_CHILD_URL`, and `KAGGLE_KERNEL_SLUG` for the controller. The Kaggle run timeout defaults to 42,000 seconds, below the 12-hour session ceiling in the current configuration; actual availability and quota remain platform-controlled.
+The worker installs `kaggle/child/requirements-gpu.txt` only when queued image work exists. Model weights are downloaded into the temporary Kaggle session; no persistent GPU service or persistent weight store is assumed. Set repository variables `VORAX_KOYEB_URL`, `VORAX_HF_CHILD_URL`, and `KAGGLE_KERNEL_SLUG` for the controller. The Kaggle run timeout defaults to 42,000 seconds, below the 12-hour session ceiling in the current configuration; actual availability and quota remain platform-controlled.
 
 ### Hugging Face backup Child and Vault
 
@@ -125,11 +129,11 @@ docker build --tag revelacode-vorax:local .
 
 ## GO / NO-GO
 
-**GO / NO-GO remains BLOCKED.** This PR establishes deployment/configuration workflows, honest health checks, X queueing, the controller, data-only trust gates and structured Vault sync. It does not establish that the external services have been deployed or that Kaggle media generation works.
+**GO / NO-GO remains BLOCKED.** The merged Child-services foundation and this follow-up code branch establish deployment/configuration workflows, honest health checks, X queueing, the controller, data-only trust gates, structured Vault sync, and a code-level Kaggle local image adapter. They do not establish that the external services have been deployed or that a real Kaggle image has been generated.
 
 Home must still collect and verify:
 1. Live Koyeb, Kaggle-session and HF Child evidence.
-2. Actual Kaggle local GPU execution plus real non-empty PNG, WAV and MP4 with SHA-256 and size.
+2. Actual Kaggle local GPU execution plus a real non-empty PNG with independent SHA-256, size, model identity, CUDA device provenance and Vault path. Audio, music, video and 3D remain blocked/unknown until their own real local adapters are implemented and verified.
 3. Confirmed HF Vault quota and successful sync evidence.
 4. At least one Koyeb-origin and one Kaggle-origin V-Lang method independently validated and merged by Home.
 5. At least 90% verified common-X coverage, the complete seven-day campaign, and green CI/security checks.
