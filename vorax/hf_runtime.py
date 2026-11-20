@@ -260,6 +260,12 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
     home_index, index_status = _refresh_home_index(force=True)
     if home_index is None:
         raise HTTPException(503, "Home metadata-only index is unavailable; refusing duplicate-blind submission")
+    try:
+        # On a real learning/verification request, reconcile earlier pending methods
+        # whose IDs and metadata have since appeared in Home. No Home method body is fetched.
+        home_reconciliation = promote_pending_home_methods(home_index)
+    except VaultError as exc:
+        raise HTTPException(503, "Runtime could not reconcile Home-approved Vault methods: " + str(exc)) from exc
     duplicate = find_duplicate(home_index, record)
     if duplicate:
         raise HTTPException(409, {
@@ -372,6 +378,7 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
         "artifact_sha256": None,
         "verification": verification,
         "vault": vault_receipt,
+        "home_reconciliation": home_reconciliation,
         "home_submission": home_submission,
     }
 
