@@ -80,7 +80,7 @@ class FreeChildRoutingTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "queued")
         self.assertEqual(result["verification"], "not_executed")
-        body = api.call_args.args[2]
+        body = api.call_args.args[3]
         self.assertIn("VORAX_X_QUEUE_V1", body["body"])
         self.assertIn('"status": "queued"', body["body"])
 
