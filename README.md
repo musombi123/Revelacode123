@@ -78,22 +78,21 @@ Account: [kaggle.com/musombiwilliam](https://www.kaggle.com/musombiwilliam)
 Workflow: `.github/workflows/deploy-kaggle-child.yml` (published-release event or manual dispatch from a release tag). The username is fixed in the workflow as `musombiwilliam`; it is not a secret.
 
 Required GitHub Actions secret:
-- `KAGGLE_KEY` — Kaggle API token/key. Never commit it or paste it into chat.
+- `KAGGLE_API_TOKEN` — the value of one Kaggle Account → API Tokens personal token. The workflows install Kaggle CLI `>=1.8.0` and authenticate using this environment variable. Never commit it or paste it into chat.
 
 Optional repository variable:
 - `KAGGLE_KERNEL_SLUG` — defaults to `revelacode-vorax-child`.
 
 The publish workflow uses `kaggle kernels push --no-run`: it publishes the selected release source and its SHA pin but does not start a GPU session. The Self-Ping Controller starts the configured kernel when queued work exists, using the latest published release source. The worker refuses to clone a different commit from the release pin. A live GPU session still requires a completed Kaggle run report with actual `nvidia-smi` evidence. The accelerator defaults to `NvidiaTeslaP100`, matching Kaggle's documented free GPU baseline; set `KAGGLE_ACCELERATOR` only when the account exposes another available accelerator. Kaggle currently documents a weekly GPU quota of around 30 hours, sometimes higher depending on demand and resources.
 
-Add these Kaggle Notebook secrets in the Kaggle account settings:
-- `VORAX_HOME_READ_TOKEN`
-- `VORAX_HOME_WRITE_TOKEN`
-- `VORAX_KAGGLE_CHILD_API_KEY`
-- `HF_VAULT_TOKEN` — write permission for the private Dataset `Musombi/revelacode-vorax-vault`
+Add these **Kaggle Notebook secrets** (Notebook editor → Add-ons → Secrets), using the values issued by the relevant platforms:
+- `VORAX_HOME_READ_TOKEN` — GitHub token with read access to the private `musombi123/Revelacode123` repository
+- `VORAX_HOME_WRITE_TOKEN` — GitHub token with Issues and Pull Requests read/write access plus Contents read/write access for child branch/file/PR creation
+- `VORAX_KAGGLE_CHILD_API_KEY` — an independent, randomly generated VORAX shared key; this is **not** a Kaggle Account API Token
+- `HF_VAULT_TOKEN` — Hugging Face write token for the private Dataset `Musombi/revelacode-vorax-vault`
 
 Optional Kaggle Notebook secrets:
 - `VORAX_CHILD_PROPOSAL_TOKEN` (otherwise the Home write token is used)
-- `HF_VAULT_TOKEN`
 - `HF_INFERENCE_TOKEN` — optional remote-provider access; it does not prove Kaggle GPU use.
 - `HF_MODEL_TOKEN` — optional Hugging Face Hub read token for downloading the local Diffusers image model if the selected model requires authentication.
 - `VORAX_KAGGLE_IMAGE_MODEL` — optional model repository ID override (default: `stable-diffusion-v1-5/stable-diffusion-v1-5`).
