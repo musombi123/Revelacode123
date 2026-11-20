@@ -73,24 +73,22 @@ def submit_template(repo: str, branch: str, child_id: str, template: dict, token
     })
 
     index_path = "templates/library/index.json"
+    base_index_blob = _api(
+        "GET",
+        f"/repos/{repo}/contents/{index_path}?ref={urllib.parse.quote(branch, safe='')}",
+        token,
+    )
     encoded_index = base64.b64encode(
         (json.dumps(updated_index, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     ).decode("ascii")
-    _api("PUT", f"/repos/{repo}/contents/{index_path}", token, {
+    index_update = {
         "message": f"vorax: update Home metadata index for {record['id']}",
         "content": encoded_index,
         "branch": new_branch,
-        "sha": ref.get("index_blob_sha"),
-    }) if False else _api(
-        "PUT",
-        f"/repos/{repo}/contents/{index_path}",
-        token,
-        {
-            "message": f"vorax: update Home metadata index for {record['id']}",
-            "content": encoded_index,
-            "branch": new_branch,
-        },
-    )
+    }
+    if base_index_blob.get("sha"):
+        index_update["sha"] = base_index_blob["sha"]
+    _api("PUT", f"/repos/{repo}/contents/{index_path}", token, index_update)
 
     pr = _api("POST", f"/repos/{repo}/pulls", token, {
         "title": f"VORAX V-Lang proposal: {record['id']}",
