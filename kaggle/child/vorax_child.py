@@ -364,7 +364,7 @@ def main() -> int:
         report["home"]["index_content"] = "metadata_only"
         report["home"]["method_bodies_downloaded"] = False
 
-        query = args.discovery_query.strip() or args.task.strip()
+        query = args.discovery_query.strip()
         discovery = discover_world(query, page_limit=args.discovery_pages)
         report["discovery"] = {
             key: discovery.get(key)
