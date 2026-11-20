@@ -542,6 +542,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
             _upload(api, repo, report_path, report_raw, "Record Home confirmation of verified V-Lang method")
             checksums[report_path] = hashlib.sha256(report_raw).hexdigest()
         promoted.append(method_id)
+        promoted_methods.append(candidate)
 
     if promoted:
         verified_records.sort(key=lambda item: item.get("id", ""))
