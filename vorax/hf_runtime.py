@@ -96,6 +96,7 @@ def _require_child(child_id: str | None, child_key: str | None) -> str:
         "VORAX_HOME_READ_TOKEN": HOME_READ_TOKEN,
         "VORAX_HOME_WRITE_TOKEN": HOME_WRITE_TOKEN,
         "HF_VAULT_TOKEN": os.getenv("HF_VAULT_TOKEN", "").strip(),
+        "HF_INFERENCE_TOKEN": os.getenv("HF_INFERENCE_TOKEN", "").strip(),
         "VORAX_TEACHER_ATTESTATION_KEY": os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip(),
     }
     missing = [name for name, value in required_secrets.items() if not value]
@@ -460,6 +461,7 @@ def health():
         "home_read_token": bool(HOME_READ_TOKEN),
         "home_write_token": bool(HOME_WRITE_TOKEN),
         "vault_token": bool(os.getenv("HF_VAULT_TOKEN", "").strip()),
+        "inference_provider_token": bool(os.getenv("HF_INFERENCE_TOKEN", "").strip()),
         "teacher_attestation_key": len(os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()) >= 32,
     }
     return {
