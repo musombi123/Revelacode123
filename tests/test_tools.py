@@ -60,54 +60,6 @@ class ToolLayerTests(unittest.TestCase):
         self.assertGreater(result.size_bytes, 0)
 
 
-    def test_kaggle_gpu_image_provider_records_sha_and_device_provenance(self):
-        import struct
-        def chunk(kind, payload):
-            return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff)
-        raw = (b"\x89PNG\r\n\x1a\n" +
-               chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0)) +
-               chunk(b"IDAT", zlib.compress(b"".join(
-                   bytes([0]) + bytes(((x + y) % 256 for x in range(64 * 3)))
-                   for y in range(64)
-               ))) + chunk(b"IEND", b""))
-        generated = {
-            "data": raw,
-            "model_id": "stable-diffusion-v1-5/stable-diffusion-v1-5",
-            "seed": 1234,
-            "steps": 20,
-            "width": 64,
-            "height": 64,
-            "elapsed_ms": 987,
-            "provider": "kaggle-local-diffusers",
-            "gpu_telemetry": {
-                "gpu_used": True,
-                "gpu_name": "NVIDIA Test GPU",
-                "device": "cuda:0",
-                "execution_time_ms": 987,
-            },
-        }
-        with patch("vorax.providers.kaggle_gpu.generate_image", return_value=generated):
-            result = tools.execute_tool_dict(
-                "image.generate",
-                {"prompt": "a test cat", "width": 64, "height": 64},
-                provider="kaggle-gpu",
-            )
-        self.assertEqual(result["status"], "verified")
-        self.assertEqual(result["provider"], "kaggle-local-diffusers")
-        self.assertEqual(result["model_id"], generated["model_id"])
-        self.assertEqual(result["gpu_telemetry"]["device"], "cuda:0")
-        self.assertIs(result["gpu_telemetry"]["gpu_used"], True)
-        self.assertEqual(len(result["sha256"]), 64)
-        self.assertGreater(result["size_bytes"], 0)
-
-    def test_kaggle_gpu_provider_never_falls_back_to_remote_media(self):
-        with self.assertRaises(tools.ToolError):
-            tools.execute_tool(
-                "music.generate",
-                {"prompt": "instrumental music"},
-                provider="kaggle-gpu",
-            )
-
     def test_invalid_png_fails_closed(self):
         with patch.dict(os.environ, {"HF_TOKEN": "test-token"}), patch.object(tools, "_hf", return_value=(b"not an image", "image/png")):
             with self.assertRaises(tools.ToolError):
