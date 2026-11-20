@@ -294,10 +294,13 @@ def main() -> int:
     parser.add_argument("--model-id", default=os.getenv("VORAX_TEACHER_MODEL", ""))
     parser.add_argument("--discovery-query", default="")
     parser.add_argument("--teacher-count", type=int, default=int(os.getenv("VORAX_TEACHER_COUNT", "3")))
+    parser.add_argument("--discovery-pages", type=int, default=int(os.getenv("VORAX_DISCOVERY_PAGES", "100")))
     args = parser.parse_args()
 
     if args.teacher_count < 1 or args.teacher_count > 5:
         raise ConnectorError("--teacher-count must be between 1 and 5")
+    if args.discovery_pages < 1 or args.discovery_pages > 1000:
+        raise ConnectorError("--discovery-pages must be between 1 and 1000")
 
     report: dict[str, Any] = {
         "child": CHILD_ID,
@@ -362,7 +365,7 @@ def main() -> int:
         report["home"]["method_bodies_downloaded"] = False
 
         query = args.discovery_query.strip() or args.task.strip()
-        discovery = discover_world(query, page_limit=100)
+        discovery = discover_world(query, page_limit=args.discovery_pages)
         report["discovery"] = {
             key: discovery.get(key)
             for key in (
@@ -372,7 +375,11 @@ def main() -> int:
             )
         }
         if not discovery["models"]:
-            raise ConnectorError("No model metadata was returned by Teacher discovery")
+            raise ConnectorError("No remotely served model metadata was returned by Teacher discovery")
+        if discovery.get("pagination_remaining"):
+            raise ConnectorError(
+                "Hub metadata discovery is incomplete; increase --discovery-pages and rerun before learning"
+            )
 
         report["status"] = "connector_ready"
         if not args.task.strip():
