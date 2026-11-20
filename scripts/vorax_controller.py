@@ -388,15 +388,26 @@ def heartbeat():
     status = kaggle_status()
     pending = queue_items()
     state = status.get("uptime_status")
+    if pending:
+        for issue, payload in pending:
+            if not payload.get("controller_seen_at"):
+                log("kaggle-child", x=payload.get("x"), method="Input X queued for Kaggle",
+                    verification="not_executed", uptime_status="queued",
+                    queue_issue=issue.get("number"), queue_url=issue.get("html_url"))
+                payload["controller_seen_at"] = stamp()
+                body = "<!-- VORAX_X_QUEUE_V1 -->\\n" + json.dumps(payload, ensure_ascii=False, indent=2) + (
+                    "\\n\\nDo not put passwords, API keys, private records, or sensitive personal data in this queue."
+                )
+                gh("PATCH", f"/repos/{REPO}/issues/{issue['number']}", {"body": body})
     if pending and state in {"running", "queued", "start_requested", "status_unknown"}:
         log("kaggle-child", uptime_status="queue_waiting_for_session",
             verification="not_executed", failure="Kaggle session is not confirmed ready; X remains queued")
-    elif pending and state in {"failed_not_running", "completed_not_running"}:
+    elif pending and state == "failed_not_running":
         log("kaggle-child", uptime_status="queued_for_next_session",
-            verification="not_executed", failure="Kaggle session not active, queue X for next session; automatic retry paused to protect quota")
+            verification="not_executed", failure="Kaggle session failed; automatic retry paused to protect quota")
     elif pending:
         log("kaggle-child", uptime_status="queued_for_next_session",
-            verification="not_executed", failure="Kaggle session not active, queue X for next session")
+            verification="not_executed", failure="Kaggle session not active; starting a bounded run for queued X")
         start_kaggle()
     elif not pending:
         log("kaggle-child", uptime_status=state or "not_observed",
