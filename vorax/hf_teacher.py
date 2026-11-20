@@ -91,6 +91,8 @@ def health():
         "remote_inference_configured": bool(os.getenv("HF_TOKEN")),
         "metadata_token_configured": bool(os.getenv("HF_READ_TOKEN")),
         "attestation_configured": len(os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()) >= 32,
+        "billable_inference_allowed": _billable_inference_allowed(),
+        "free_provider_only": not _billable_inference_allowed(),
         "weights_downloaded": False,
         "local_model_loaded": False,
         "kaggle_t4_used": False,
@@ -285,6 +287,50 @@ def discover(
         "local_model_loaded": False,
     }
 
+def _billable_inference_allowed() -> bool:
+    return os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"}
+
+
+def _resolve_teacher_model(model_ref: str) -> str:
+    """Resolve a live provider and require explicit free pricing unless billable use is enabled."""
+    base_model, separator, requested_provider = model_ref.partition(":")
+    catalogue = _discover_router_models(base_model, limit=100)
+    model = next((item for item in catalogue if item.get("id") == base_model), None)
+    if model is None:
+        raise HTTPException(404, "The requested model is not listed by the Inference Providers router")
+
+    providers = [
+        item for item in model.get("providers", [])
+        if isinstance(item, dict)
+        and str(item.get("status", "")).casefold() == "live"
+        and isinstance(item.get("provider"), str)
+        and item.get("provider")
+    ]
+    if separator:
+        providers = [
+            item for item in providers
+            if item["provider"].casefold() == requested_provider.casefold()
+        ]
+    if not _billable_inference_allowed():
+        providers = [item for item in providers if item.get("is_free") is True]
+    if not providers:
+        if not _billable_inference_allowed():
+            raise HTTPException(
+                402,
+                "No live free provider is available for this model; billable inference is disabled by default",
+            )
+        raise HTTPException(503, "No live Inference Provider is available for the requested model")
+
+    providers.sort(
+        key=lambda item: (
+            float(item.get("throughput") or 0),
+            -float(item.get("first_token_latency_ms") or 1e9),
+        ),
+        reverse=True,
+    )
+    return f"{base_model}:{providers[0]['provider']}"
+
+
 def _attest_response(model_id: str, provider: str, content: str, request_id: str | None) -> dict:
     """Sign remote Teacher provenance for Runtime verification; Kaggle never receives the key."""
     secret = os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()
@@ -318,6 +364,7 @@ def ask(
     token = os.getenv("HF_TOKEN", "").strip()
     if not token:
         raise HTTPException(503, "HF_TOKEN is not configured for remote Inference Providers")
+    model_id = _resolve_teacher_model(model_id)
     payload = {
         "model": model_id,
         "messages": [
