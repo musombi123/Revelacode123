@@ -175,11 +175,16 @@ def queue_x(value):
     )
 
 
+def _has_kaggle_credentials() -> bool:
+    """Support current personal API tokens, while retaining legacy CLI compatibility."""
+    return bool(os.getenv("KAGGLE_API_TOKEN") or os.getenv("KAGGLE_KEY"))
+
+
 def kaggle_status():
     kernel = os.getenv("KAGGLE_KERNEL", "").strip()
-    if not kernel or not os.getenv("KAGGLE_USERNAME") or not os.getenv("KAGGLE_KEY"):
+    if not kernel or not os.getenv("KAGGLE_USERNAME") or not _has_kaggle_credentials():
         return log("kaggle-child", uptime_status="not_configured", verification=None,
-                   failure="KAGGLE_KERNEL or Kaggle credentials missing")
+                   failure="KAGGLE_KERNEL or Kaggle API token is missing")
     try:
         result = subprocess.run(
             ["kaggle", "kernels", "status", kernel],
@@ -259,8 +264,8 @@ def collect_report(kernel):
 
 def start_kaggle():
     kernel = os.getenv("KAGGLE_KERNEL", "").strip()
-    if not kernel or not os.getenv("KAGGLE_USERNAME") or not os.getenv("KAGGLE_KEY"):
-        return log("kaggle-child", uptime_status="not_configured", failure="Kaggle credentials/kernel missing")
+    if not kernel or not os.getenv("KAGGLE_USERNAME") or not _has_kaggle_credentials():
+        return log("kaggle-child", uptime_status="not_configured", failure="Kaggle API token/kernel missing")
     if not queue_items():
         return log("kaggle-child", uptime_status="idle_no_queue", verification="not_executed")
     try:
