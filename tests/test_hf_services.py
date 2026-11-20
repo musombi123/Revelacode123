@@ -100,7 +100,11 @@ class TeacherServiceTests(unittest.TestCase):
                     hf_teacher,
                     "_discover_kind",
                     return_value=([], None),
-                ) as discover_kind:
+                ) as discover_kind, patch.object(
+                    hf_teacher,
+                    "_discover_router_models",
+                    return_value=[],
+                ):
                     hf_teacher.discover(
                         query="vision",
                         limit=17,
