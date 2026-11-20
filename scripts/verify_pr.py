@@ -118,7 +118,7 @@ for item in proposal_files:
 
 tree=get(f"/repos/{repo}/git/trees/{pr['base']['sha']}?recursive=1")
 if tree.get("truncated"): reject("Home tree is truncated; refusing partial duplicate check")
-existing_ids=set(); existing_fps=set(); existing_tasks=set(); existing_records=[]
+existing_ids=set(); existing_fps=set(); existing_tasks=set(); existing_triggers=set(); existing_records=[]
 for node in tree.get("tree",[]):
     path=node.get("path","")
     if node.get("type")!="blob" or not path.startswith("templates/library/") or not path.endswith((".vlang",".tlang")): continue
@@ -127,12 +127,17 @@ for node in tree.get("tree",[]):
         existing_records.append(old)
         existing_ids.add(old["id"]); existing_fps.add(fingerprint(old))
         existing_tasks.add((old["domain"].casefold(),old["task"].casefold()))
+        for trigger in old["triggers"]:
+            existing_triggers.add((old["domain"].casefold(),trigger.casefold()))
 for t in proposals:
     if t["id"] in existing_ids: reject("template ID already exists: "+t["id"])
     if fingerprint(t) in existing_fps: reject("duplicate procedure: "+t["id"])
     key=(t["domain"].casefold(),t["task"].casefold())
     if key in existing_tasks: reject("duplicate task/domain: "+t["id"])
+    trigger_keys={(t["domain"].casefold(),trigger.casefold()) for trigger in t["triggers"]}
+    if trigger_keys & existing_triggers: reject("duplicate task trigger/domain: "+t["id"])
     existing_ids.add(t["id"]); existing_fps.add(fingerprint(t)); existing_tasks.add(key)
+    existing_triggers.update(trigger_keys)
     existing_records.append(t)
 
 # Home verifies the index from trusted base methods plus the Child's proposed methods.
