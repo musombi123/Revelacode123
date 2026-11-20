@@ -237,12 +237,16 @@ def main():
                 classification = classify_input_x(value, STORE.all())
                 task["method"] = classification.get("task_type")
                 if task["method"] in HEAVY:
-                    modality = "music" if task["method"] == "music" else (
-                        "audio" if task["method"] in {"speech", "audio"} else task["method"]
+                    modality = (
+                        "image" if task["method"] in {"image", "logo"} else
+                        "audio" if task["method"] in {"speech", "audio"} else
+                        "text" if task["method"] == "3d" else
+                        task["method"]
                     )
                     metadata = request_json("POST", "/v1/devour/discover", child_key,
                                              {"modality": modality, "limit": 10})
-                    task["verification"] = "gpu_observed_metadata_only"
+                    task["verification"] = "metadata_only_not_media_execution"
+                    task["gpu_telemetry_available"] = report["gpu_telemetry"]["available"]
                     task["failure"] = (
                         "Local GPU inference adapter for this modality is not yet installed. "
                         "Model metadata was discovered only; no PNG/WAV/MP4 was generated."
