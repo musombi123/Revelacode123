@@ -62,7 +62,7 @@ class TeacherServiceTests(unittest.TestCase):
 
 class RuntimeServiceTests(unittest.TestCase):
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
-        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime"}), \
+        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token"}), \
              patch.object(hf_runtime, "CHILD_ID", "kaggle-child"), \
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
              patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
