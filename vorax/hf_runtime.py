@@ -164,8 +164,8 @@ def _teacher_ask(prompt: str, model_id: str, child_id: str) -> dict:
 def _parse_candidate(text: str) -> dict:
     content = text.strip()
     if content.startswith("```"):
-        content = re.sub(r"^```(?:json)?\\s*", "", content, flags=re.I)
-        content = re.sub(r"\\s*```$", "", content)
+        content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.I)
+        content = re.sub(r"\s*```$", "", content)
     try:
         value = json.loads(content)
     except json.JSONDecodeError as exc:
