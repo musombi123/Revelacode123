@@ -136,7 +136,6 @@ def make_runtime_context(target: Path) -> None:
         target / "vorax",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "kaggle_gpu.py"),
     )
-    shutil.copytree(ROOT / "templates", target / "templates", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     assert_weight_free(target)
     reqs = (target / "requirements.txt").read_text(encoding="utf-8").lower()
     if "diffusers" in reqs or "transformers" in reqs:
@@ -190,11 +189,6 @@ def main() -> int:
         help="Make one real Teacher inference request. This is deliberately opt-in and may consume provider quota/credits.",
     )
     parser.add_argument("--teacher-model", default=os.getenv("VORAX_TEACHER_MODEL", ""))
-    parser.add_argument(
-        "--seed-pending-smoke-method",
-        action="store_true",
-        help="Write one test V-Lang method to Vault pending and open a Home PR through Runtime. Never merges.",
-    )
     args = parser.parse_args()
 
     if args.health_wait_seconds < 0 or args.health_wait_seconds > 1800:
@@ -308,42 +302,6 @@ def main() -> int:
         if status != 200 or inference.get("remote_inference") is not True or inference.get("kaggle_t4_used") is not False:
             raise RuntimeError("Teacher remote inference smoke test did not prove the required provenance.")
 
-    if args.seed_pending_smoke_method:
-        candidate = {
-            "version": "vlang/1",
-            "id": "smoke.runtime.identity",
-            "domain": "verification",
-            "task": "return a supplied test label unchanged",
-            "triggers": ["runtime identity smoke test"],
-            "inputs": {"label": "string"},
-            "steps": [{"op": "identity", "args": [{"input": "label"}], "as": "answer"}],
-            "result": {"step": "answer"},
-            "tests": [
-                {"input": {"label": "VORAX pending smoke A"}, "expect": "VORAX pending smoke A"},
-                {"input": {"label": "VORAX pending smoke B"}, "expect": "VORAX pending smoke B"},
-            ],
-            "provenance": {"kind": "teacher", "teacher": "deployment-smoke"},
-        }
-        status, proof = request_json(
-            runtime_url + "/vorax/verify",
-            body={
-                "method": candidate,
-                "x": "runtime identity smoke test",
-                "child_id": CHILD_ID,
-                "api_key": env["VORAX_KAGGLE_CHILD_API_KEY"],
-            },
-            timeout=120,
-        )
-        report["runtime"]["pending_method_smoke"] = {
-            "http_status": status,
-            "status": proof.get("status"),
-            "method": proof.get("method"),
-            "method_sha256": proof.get("method_sha256"),
-            "vault": proof.get("vault"),
-            "home_submission": proof.get("home_submission"),
-        }
-        if status != 200 or proof.get("status") != "verified":
-            raise RuntimeError("Pending method smoke failed; inspect Runtime response.")
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
