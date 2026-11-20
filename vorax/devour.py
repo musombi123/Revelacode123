@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 import time
 from pathlib import Path
 from typing import Any
@@ -64,8 +65,14 @@ class DiscoveryCatalog:
             db.execute("""CREATE TABLE IF NOT EXISTS devour_stats (
                 key TEXT PRIMARY KEY, value INTEGER NOT NULL)""")
 
+    @contextmanager
     def connect(self):
-        return sqlite3.connect(self.path)
+        db = sqlite3.connect(self.path)
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def upsert(self, model: dict, modality: str):
         model_id = str(model.get("id") or "").strip()

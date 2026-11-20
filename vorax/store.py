@@ -1,6 +1,7 @@
 """SQLite storage for verified T-Lang only; no prompts or teacher prose."""
 from __future__ import annotations
 import json, sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from .vlang import fingerprint, validate_template
 
@@ -11,8 +12,15 @@ class TemplateStore:
         with self._connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, body TEXT NOT NULL, fingerprint TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
             db.execute("CREATE TABLE IF NOT EXISTS child_state (child_id TEXT PRIMARY KEY, consecutive_failures INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+    @contextmanager
     def _connect(self):
-        db=sqlite3.connect(self.path,timeout=15); db.row_factory=sqlite3.Row; return db
+        db = sqlite3.connect(self.path, timeout=15)
+        db.row_factory = sqlite3.Row
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
     def add(self,t: dict):
         validate_template(t)
         body=json.dumps(t,sort_keys=True,separators=(",",":"),ensure_ascii=False); fp=fingerprint(t)
