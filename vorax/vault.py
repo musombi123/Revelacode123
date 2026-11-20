@@ -426,6 +426,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
         else:
             _upload(api, repo, target, canonical, "Promote Home-merged V-Lang method from Vault pending")
         checksums[target] = canonical_sha
+        promoted_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         verified_entry = {
             "id": method_id,
             "path": target,
@@ -433,6 +434,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
             "size_bytes": len(canonical),
             "home_certified": True,
             "home_pr": entry.get("home_pr"),
+            "promoted_at": promoted_at,
         }
         existing_entry = next((x for x in verified_records if isinstance(x, dict) and x.get("id") == method_id), None)
         if existing_entry:
@@ -441,6 +443,23 @@ def promote_pending_home_methods(home_index: dict) -> dict:
             verified_records.append(verified_entry)
         entry["status"] = "merged_home_and_promoted"
         entry["home_certification"] = "confirmed_by_home_index"
+        entry["promoted_at"] = promoted_at
+
+        report_path = entry.get("verification_report")
+        if report_path:
+            report = _read_json(api, repo, report_path, {})
+            report["home_certification"] = "confirmed_by_home_index"
+            report["home_index_version"] = trusted_index["version"]
+            report["home_index_summary"] = {
+                "id": home_summary["id"],
+                "domain": home_summary["domain"],
+                "task": home_summary["task"],
+                "triggers": home_summary["triggers"],
+            }
+            report["promoted_at"] = promoted_at
+            report_raw = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
+            _upload(api, repo, report_path, report_raw, "Record Home confirmation of verified V-Lang method")
+            checksums[report_path] = hashlib.sha256(report_raw).hexdigest()
         promoted.append(method_id)
 
     if promoted:
