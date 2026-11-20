@@ -207,6 +207,7 @@ def choose_teacher_models(models: list[dict], requested: str = "", count: int = 
     if requested_id:
         ordered.sort(key=lambda item: 0 if str(item.get("id") or "").strip() == requested_id else 1)
 
+    allow_billable = os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "").strip().casefold() in {"1", "true", "yes"}
     selected = []
     selected_model_ids = set()
     for item in ordered:
@@ -219,6 +220,7 @@ def choose_teacher_models(models: list[dict], requested: str = "", count: int = 
             and str(provider.get("status", "")).casefold() == "live"
             and str(provider.get("task", "")).casefold() in {"conversational", "text-generation"}
             and str(provider.get("provider") or "").strip()
+            and (allow_billable or provider.get("is_free") is True)
         ]
         if requested_id and model_id == requested_id and separator:
             providers = [
