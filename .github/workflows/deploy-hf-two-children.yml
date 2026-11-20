@@ -51,4 +51,4 @@ jobs:
           if [[ "${{ inputs.smoke_remote_inference }}" == "true" ]]; then
             args+=(--smoke-remote-inference)
           fi
-          python scripts/deploy_hf_children.py "\${args[@]}"
+          python scripts/deploy_hf_children.py "${args[@]}"
