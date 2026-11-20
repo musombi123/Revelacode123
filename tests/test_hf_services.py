@@ -465,6 +465,7 @@ class VaultProtectionTests(unittest.TestCase):
             result = vault.promote_pending_home_methods(home_index)
         self.assertEqual(result["status"], "promoted")
         self.assertEqual(result["promoted_method_ids"], [record["id"]])
+        self.assertEqual(result["promoted_methods"], [record])
         self.assertTrue(any(path == f"vlang/verified/{record['id']}.vlang" for path, _ in files))
 
     def test_pending_method_is_not_promoted_when_home_metadata_does_not_match(self):
