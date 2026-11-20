@@ -98,6 +98,7 @@ class FreeChildRoutingTests(unittest.TestCase):
         with patch.dict(os.environ, {"HF_VAULT_TOKEN": "test-token"}, clear=True), \
              patch("huggingface_hub.HfApi") as api_class:
             api = api_class.return_value
+            api.repo_info.return_value.private = True
             _, repo = vault._client()
 
         self.assertEqual(repo, "Musombi/revelacode-vorax-vault")
@@ -107,7 +108,23 @@ class FreeChildRoutingTests(unittest.TestCase):
             private=True,
             exist_ok=True,
         )
+        api.repo_info.assert_called_once_with(
+            repo_id="Musombi/revelacode-vorax-vault",
+            repo_type="dataset",
+        )
 
+    def test_vault_refuses_existing_public_dataset(self):
+        from vorax import vault
+
+        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "test-token"}, clear=True), \
+             patch("huggingface_hub.HfApi") as api_class:
+            api = api_class.return_value
+            api.repo_info.return_value.private = False
+            with self.assertRaisesRegex(vault.VaultError, "is public"):
+                vault._client()
+
+        api.create_repo.assert_called_once()
+        api.repo_info.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

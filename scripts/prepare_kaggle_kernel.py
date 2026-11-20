@@ -29,6 +29,17 @@ metadata = {
     "kernel_sources": [],
     "model_sources": [],
 }
+release_ref = os.getenv("VORAX_RELEASE_REF") or os.getenv("GITHUB_REF_NAME", "").strip()
+release_sha = os.getenv("VORAX_RELEASE_SHA") or os.getenv("GITHUB_SHA", "").strip().lower()
+if not re.fullmatch(r"[A-Za-z0-9._/-]{1,128}", release_ref):
+    raise SystemExit("VORAX_RELEASE_REF must identify a published release tag")
+if not re.fullmatch(r"[0-9a-f]{40}", release_sha):
+    raise SystemExit("VORAX_RELEASE_SHA must be the 40-character tagged commit SHA")
+
+(root / "vorax-release.json").write_text(
+    json.dumps({"schema": "vorax-release/v1", "ref": release_ref, "sha": release_sha}, indent=2) + "\n",
+    encoding="utf-8",
+)
 target = root / "kernel-metadata.json"
 target.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-print(f"Prepared Kaggle kernel source for {username}/{slug}; GPU has not been started.")
+print(f"Prepared Kaggle kernel source for {username}/{slug} at {release_ref}@{release_sha}; GPU has not been started.")

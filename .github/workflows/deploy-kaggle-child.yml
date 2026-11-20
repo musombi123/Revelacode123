@@ -1,22 +1,31 @@
 name: Publish VORAX Kaggle GPU Research Child
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: read
+  checks: read
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout trusted Home
+      - name: Checkout exact tagged release
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require a published release and green exact-SHA CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/require_green_release.py
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,11 +37,12 @@ jobs:
 
       - name: Publish kernel source without starting a GPU session
         env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_USERNAME: musombiwilliam
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_KERNEL_SLUG: ${{ vars.KAGGLE_KERNEL_SLUG }}
+          KAGGLE_KERNEL_SLUG: ${{ vars.KAGGLE_KERNEL_SLUG || 'revelacode-vorax-child' }}
         run: |
           test -n "$KAGGLE_USERNAME" || { echo 'Missing KAGGLE_USERNAME'; exit 1; }
           test -n "$KAGGLE_KEY" || { echo 'Missing KAGGLE_KEY'; exit 1; }
           python scripts/prepare_kaggle_kernel.py
+          test -s kaggle/child/vorax-release.json
           kaggle kernels push -p kaggle/child --no-run

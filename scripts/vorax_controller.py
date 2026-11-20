@@ -266,7 +266,7 @@ def start_kaggle():
     try:
         subprocess.run([sys.executable, "scripts/prepare_kaggle_kernel.py"], check=True, timeout=30)
         timeout = min(max(int(os.getenv("KAGGLE_TIMEOUT_SECONDS", "42000")), 60), 43200)
-        accelerator = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaT4")
+        accelerator = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaP100")
         result = subprocess.run(
             ["kaggle", "kernels", "push", "-p", "kaggle/child",
              "--timeout", str(timeout), "--accelerator", accelerator],
