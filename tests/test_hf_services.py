@@ -244,7 +244,10 @@ class RuntimeServiceTests(unittest.TestCase):
             ],
             "provenance": {"kind": "teacher", "teacher": "test-teacher"},
         }
-        with patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \
+        with patch.object(hf_runtime, "promote_pending_home_methods", return_value={
+                 "status": "no_home_merged_pending_methods", "promoted_method_ids": [],
+             }), \
+             patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \
              patch.object(hf_runtime, "write_pending_method", return_value={"status": "written_pending"}), \
              patch.object(hf_runtime, "submit_template", return_value={
                  "pull_request": "https://github.com/musombi123/Revelacode123/pull/999",
