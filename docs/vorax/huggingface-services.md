@@ -40,7 +40,7 @@ Example request fields: prompt and model_id, for example owner/model:provider. T
 
 Teacher Space secrets:
 - **HF_TOKEN** — Hugging Face token with Inference Providers permission.
-- **HF_READ_TOKEN** — optional token for Hub metadata discovery.
+- **HF_READ_TOKEN** — required Hub metadata-read token for model, Space and Dataset discovery.
 - **VORAX_CHILD_ID=kaggle-child**.
 - **VORAX_KAGGLE_CHILD_API_KEY**.
 - **VORAX_TEACHER_ATTESTATION_KEY** — shared only with Runtime; never place it in Kaggle Secrets.
@@ -124,7 +124,7 @@ Local deployment commands:
 - python scripts/verify_hf_vault.py
 - python scripts/deploy_hf_children.py --health-wait-seconds 300
 
-The script requires **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, and **HF_VAULT_TOKEN** in the local process environment. **HF_READ_TOKEN** and **VORAX_TEACHER_MODEL** are optional. Never paste these values into chat or commit them.
+The script requires **HF_SPACE_TOKEN**, **HF_TOKEN**, **HF_READ_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, and **HF_VAULT_TOKEN** in the local process environment. **HF_READ_TOKEN** and **VORAX_TEACHER_MODEL** are optional. Never paste these values into chat or commit them.
 
 Optional, deliberately explicit smoke action: **--smoke-remote-inference --teacher-model owner/model:provider** makes one real remote inference request. It can incur charges. Current Hugging Face pricing documentation lists no monthly Inference Providers credits for Free accounts; do not run Teacher learning or the inference smoke unless an existing grant/credit balance or an already-configured provider arrangement covers it. Deployment does not fabricate or seed a V-Lang method.
 
