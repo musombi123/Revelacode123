@@ -116,7 +116,7 @@ class FreeChildRoutingTests(unittest.TestCase):
     def test_vault_refuses_existing_public_dataset(self):
         from vorax import vault
 
-        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "test-token"}, clear=True), \\
+        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "test-token"}, clear=True), \
              patch("huggingface_hub.HfApi") as api_class:
             api = api_class.return_value
             api.repo_info.return_value.private = False
