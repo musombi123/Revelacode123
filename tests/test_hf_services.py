@@ -86,7 +86,7 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertIs(result["weights_downloaded"], False)
         self.assertEqual(result["provider_used"], "test-remote-provider")
         self.assertEqual(result["attestation"]["algorithm"], "hmac-sha256")
-        self.assertEqual(result["attestation"]["payload"]["model_id"], "acme/example")
+        self.assertEqual(result["attestation"]["payload"]["model_id"], "acme/example:test-remote-provider")
         self.assertEqual(
             result["attestation"]["payload"]["response_sha256"],
             __import__("hashlib").sha256("A bounded teaching response.".encode()).hexdigest(),
