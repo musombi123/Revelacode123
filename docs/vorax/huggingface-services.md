@@ -41,6 +41,7 @@ Teacher Space secrets:
 - **HF_READ_TOKEN** — optional token for Hub metadata discovery.
 - **VORAX_CHILD_ID=kaggle-child**.
 - **VORAX_KAGGLE_CHILD_API_KEY**.
+- **VORAX_TEACHER_ATTESTATION_KEY** — shared only with Runtime; never place it in Kaggle Secrets.
 
 The Teacher has no Vault token and no GitHub Home write token.
 
@@ -68,7 +69,7 @@ A successful **hello, who are you** request should resolve through the shared **
 
 Candidate trust flow:
 1. Teacher returns a proposed V-Lang object.
-2. Runtime overwrites provenance with the authenticated Child and Teacher identity.
+2. Runtime verifies the Teacher's HMAC-signed exact response, provider/model identity, remote-inference flags, timestamp and response hash; it also proves the submitted candidate is byte-for-byte equivalent as canonical JSON to the method inside that signed response. Runtime then overwrites provenance with the authenticated Child and Teacher identity.
 3. Runtime reruns schema validation and every declared test using the repository's trusted interpreter.
 4. Runtime writes only to **vlang/pending/** and updates **vlang/pending/index.json**, verification report and SHA-256 manifest.
 5. Runtime opens a GitHub Home PR. The pending method is deliberately **not** inserted into the executable Runtime catalogue.
@@ -84,6 +85,7 @@ Runtime Space secrets:
 - **HF_VAULT_REPO=Musombi/revelacode-vorax-vault**.
 - **VORAX_TEACHER_URL=https://musombi-vorax-teacher-service.hf.space**.
 - **VORAX_TEACHER_MODEL** — optional default used by /vorax/learn.
+- **VORAX_TEACHER_ATTESTATION_KEY** — the same private HMAC key configured on Teacher; Kaggle must never receive it.
 
 ## 3. Preserve the existing Vault
 
@@ -123,7 +125,7 @@ The script requires **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_K
 
 Optional, deliberately explicit smoke action: **--smoke-remote-inference --teacher-model owner/model:provider** makes one actual remote inference request and may consume provider quota/credits. Deployment does not fabricate or seed a V-Lang method.
 
-The equivalent release-gated GitHub Actions workflow is **.github/workflows/deploy-hf-two-children.yml**. It runs only from a published tag that passes **scripts/require_green_release.py**. Required GitHub Secrets are **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, and **HF_VAULT_TOKEN**; optional **HF_READ_TOKEN** and repository variable **VORAX_TEACHER_MODEL** may also be set.
+The equivalent release-gated GitHub Actions workflow is **.github/workflows/deploy-hf-two-children.yml**. It runs only from a published tag that passes **scripts/require_green_release.py**. Required GitHub Secrets are **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, **HF_VAULT_TOKEN**, and **VORAX_TEACHER_ATTESTATION_KEY**; optional **HF_READ_TOKEN** and repository variable **VORAX_TEACHER_MODEL** may also be set.
 
 **Hosting constraint:** Hugging Face documents Docker Spaces as compute Spaces. Personal-account CPU Basic for Docker/Gradio currently requires PRO eligibility; free Static Spaces cannot host this FastAPI Docker service. The script does not upgrade a plan, add billing, or select paid hardware. If Space creation is rejected by account eligibility, deployment stops and reports the service as not live.
 
