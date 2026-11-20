@@ -5,10 +5,12 @@ exports executable V-Lang method bodies from Home into a Child runtime.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from typing import Iterable
 
-from .vlang import validate_template
+from .vlang import dump_record, validate_template
 
 INDEX_VERSION = "vorax-home-method-index/v1"
 
@@ -20,6 +22,7 @@ def summarize_method(record: dict) -> dict:
         "domain": record["domain"],
         "task": record["task"],
         "triggers": list(record["triggers"]),
+        "method_sha256": hashlib.sha256(dump_record(record).encode("utf-8")).hexdigest(),
     }
 
 
@@ -48,7 +51,7 @@ def parse_method_index(raw: str | bytes) -> dict:
     records = value.get("records")
     if not isinstance(records, list) or value.get("methods_total") != len(records):
         raise ValueError("Home method index has an invalid record list")
-    required = {"id", "domain", "task", "triggers"}
+    required = {"id", "domain", "task", "triggers", "method_sha256"}
     ids = set()
     for item in records:
         if not isinstance(item, dict) or set(item) != required:
@@ -57,6 +60,9 @@ def parse_method_index(raw: str | bytes) -> dict:
             raise ValueError("Home method index entry has invalid text metadata")
         if not isinstance(item.get("triggers"), list) or any(not isinstance(x, str) for x in item["triggers"]):
             raise ValueError("Home method index triggers are invalid")
+        digest = item.get("method_sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Home method checksum metadata is invalid")
         if item["id"] in ids:
             raise ValueError("Home method index contains a duplicate ID")
         ids.add(item["id"])
