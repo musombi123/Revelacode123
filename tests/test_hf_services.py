@@ -34,6 +34,7 @@ class TeacherServiceTests(unittest.TestCase):
                  "HF_TOKEN": "not-a-real-token",
                  "VORAX_CHILD_ID": "kaggle-child",
                  "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
+                 "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
              }), \
              patch.object(hf_teacher, "_http_json", return_value=(response, headers)) as call, \
              patch.object(hf_teacher, "_log") as log:
@@ -46,6 +47,12 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertIs(result["kaggle_t4_used"], False)
         self.assertIs(result["weights_downloaded"], False)
         self.assertEqual(result["provider_used"], "test-remote-provider")
+        self.assertEqual(result["attestation"]["algorithm"], "hmac-sha256")
+        self.assertEqual(result["attestation"]["payload"]["model_id"], "acme/example")
+        self.assertEqual(
+            result["attestation"]["payload"]["response_sha256"],
+            __import__("hashlib").sha256("A bounded teaching response.".encode()).hexdigest(),
+        )
         self.assertEqual(call.call_args.args[0], hf_teacher.HF_CHAT_API)
         self.assertEqual(log.call_args.kwargs["kaggle_t4_used"], False)
 
@@ -62,7 +69,7 @@ class TeacherServiceTests(unittest.TestCase):
 
 class RuntimeServiceTests(unittest.TestCase):
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
-        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token"}), \
+        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token", "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}), \
              patch.object(hf_runtime, "CHILD_ID", "kaggle-child"), \
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
              patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
@@ -86,6 +93,74 @@ class RuntimeServiceTests(unittest.TestCase):
              patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"):
             with self.assertRaises(HTTPException) as caught:
                 hf_runtime.input_x({"x": "hello, who are you"}, None, None)
+        self.assertEqual(caught.exception.status_code, 403)
+
+
+    def _signed_teacher_receipt(self, response: str):
+        import hashlib
+        import hmac
+        import json
+        import time
+        payload = {
+            "model_id": "acme/example",
+            "provider_used": "test-provider",
+            "remote_inference": True,
+            "kaggle_t4_used": False,
+            "weights_downloaded": False,
+            "response_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
+            "request_id": "teacher-request-1",
+            "issued_at": int(time.time()),
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        secret = "test-teacher-hmac-secret-long-enough"
+        signature = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+        return {"algorithm": "hmac-sha256", "payload": payload, "signature": signature}
+
+    def test_runtime_accepts_valid_teacher_attestation(self):
+        response = json.dumps({
+            "version": "vlang/1",
+            "id": "learned.attested",
+            "domain": "text",
+            "task": "return supplied text unchanged",
+            "triggers": ["return text unchanged", "identity text procedure"],
+            "inputs": {"value": "string"},
+            "steps": [{"op": "identity", "args": [{"input": "value"}], "as": "answer"}],
+            "result": {"step": "answer"},
+            "tests": [
+                {"input": {"value": "one"}, "expect": "one"},
+                {"input": {"value": "two"}, "expect": "two"},
+            ],
+            "provenance": {"kind": "teacher", "teacher": "acme/example"},
+        })
+        attestation = self._signed_teacher_receipt(response)
+        with patch.dict(os.environ, {"VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}):
+            proof = hf_runtime._verify_teacher_attestation(response, attestation, "acme/example")
+        self.assertIs(proof["remote_inference"], True)
+        self.assertIs(proof["kaggle_t4_used"], False)
+        self.assertIs(proof["weights_downloaded"], False)
+
+    def test_runtime_rejects_forged_or_modified_teacher_response(self):
+        response = '{"candidate":"not trusted"}'
+        attestation = self._signed_teacher_receipt(response)
+        with patch.dict(os.environ, {"VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}):
+            with self.assertRaises(HTTPException) as caught:
+                hf_runtime._verify_teacher_attestation(response + " altered", attestation, "acme/example")
+        self.assertEqual(caught.exception.status_code, 403)
+
+    def test_runtime_rejects_teacher_attestation_when_kaggle_gpu_is_claimed(self):
+        response = "signed teacher response"
+        attestation = self._signed_teacher_receipt(response)
+        attestation["payload"]["kaggle_t4_used"] = True
+        import hashlib
+        import hmac
+        import json
+        canonical = json.dumps(attestation["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        attestation["signature"] = hmac.new(
+            b"test-teacher-hmac-secret-long-enough", canonical.encode(), hashlib.sha256
+        ).hexdigest()
+        with patch.dict(os.environ, {"VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}):
+            with self.assertRaises(HTTPException) as caught:
+                hf_runtime._verify_teacher_attestation(response, attestation, "acme/example")
         self.assertEqual(caught.exception.status_code, 403)
 
     def test_verified_candidate_is_not_added_to_runtime_catalog_before_home_merge(self):
