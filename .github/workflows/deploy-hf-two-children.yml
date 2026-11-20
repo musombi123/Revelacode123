@@ -8,11 +8,6 @@ on:
         required: false
         type: boolean
         default: false
-      seed_pending_smoke_method:
-        description: "Write one verified smoke method to Vault pending and open a Home PR (never merges)"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -55,8 +50,5 @@ jobs:
           args=(--health-wait-seconds 300)
           if [[ "${{ inputs.smoke_remote_inference }}" == "true" ]]; then
             args+=(--smoke-remote-inference)
-          fi
-          if [[ "${{ inputs.seed_pending_smoke_method }}" == "true" ]]; then
-            args+=(--seed-pending-smoke-method)
           fi
           python scripts/deploy_hf_children.py "\${args[@]}"
