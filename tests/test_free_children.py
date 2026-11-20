@@ -35,11 +35,12 @@ class AwayChildPolicyTests(unittest.TestCase):
         execute.assert_called_once_with("image.generate", {"prompt": "cat"})
 
     def test_shared_api_does_not_read_home_method_bodies(self):
-        with patch.object(vorax.api, "_home_metadata_index", return_value={
-            "version": "vorax-home-method-index/v1",
-            "methods_total": 30,
-            "records": [],
-        }):
+        with patch.object(vorax.api, "actor", return_value="kaggle-child"), \
+             patch.object(vorax.api, "_home_metadata_index", return_value={
+                 "version": "vorax-home-method-index/v1",
+                 "methods_total": 30,
+                 "records": [],
+             }):
             result = vorax.api.vorax_input_x({"x": "hello, who are you"}, request_scope())
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["method"], "runtime.identity")
@@ -47,7 +48,8 @@ class AwayChildPolicyTests(unittest.TestCase):
         self.assertIs(result["verification"]["home_method_bodies_loaded"], False)
 
     def test_shared_api_unknown_x_is_not_auto_queued_or_self_learned(self):
-        with patch.object(vorax.api, "_home_metadata_index", return_value=None):
+        with patch.object(vorax.api, "actor", return_value="kaggle-child"), \
+             patch.object(vorax.api, "_home_metadata_index", return_value=None):
             result = vorax.api.vorax_input_x({"x": "build a complex irrigation controller"}, request_scope())
         self.assertEqual(result["status"], "unknown")
         self.assertIsNone(result["artifact_sha256"])
@@ -55,10 +57,6 @@ class AwayChildPolicyTests(unittest.TestCase):
         self.assertNotIn("learning", result)
 
     def test_metadata_fetch_reads_only_the_home_index_endpoint(self):
-        metadata = {
-            "encoding": "base64",
-            "content": "eyJ2ZXJzaW9uIjogInZvc mF4LWhvbWUtbWV0aG9kLWluZGV4L3YxIn0=",
-        }
         with patch.object(github_home, "_api", return_value={
             "encoding": "base64",
             "content": __import__("base64").b64encode(
