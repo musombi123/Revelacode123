@@ -8,7 +8,7 @@ def _client():
  token=os.getenv("HF_VAULT_TOKEN","").strip()
  if not token: raise VaultError("HF_VAULT_TOKEN is not configured")
  from huggingface_hub import HfApi
- repo=os.getenv("HF_VAULT_REPO","musombi123/revelacode-vorax-vault")
+ repo=os.getenv("HF_VAULT_REPO","Musombi/revelacode-vorax-vault")
  if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repo): raise VaultError("Invalid Vault repo ID")
  api=HfApi(token=token); api.create_repo(repo_id=repo,repo_type="dataset",private=True,exist_ok=True)
  return api,repo
