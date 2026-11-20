@@ -368,39 +368,99 @@ def main() -> int:
                 "note": "Supply --task or VORAX_X to ask a remote Teacher and propose one method.",
             }
         else:
-            model_id = choose_teacher_model(discovery["models"], args.model_id)
-            prompt = (
+            teacher_models = choose_teacher_models(
+                discovery["models"],
+                args.model_id,
+                count=args.teacher_count,
+            )
+            if not teacher_models:
+                raise ConnectorError("No text-capable models were found in the metadata catalogue")
+            user_x = args.task.strip()[:12000]
+            base_prompt = (
                 "Teach VORAX how to perform the user's task as one bounded V-Lang v1 method. "
-                "Return ONLY a single JSON object with keys version,id,domain,task,triggers,inputs,steps,"
-                "result,tests,provenance. Include at least two executable tests with exact expected "
-                "outputs. Use only the approved V-Lang operations or a registered CALL TOOL contract. "
+                "Use only approved V-Lang operations or a registered CALL TOOL contract. "
+                "Include at least two executable tests with exact expected outputs. "
                 "Do not invent tool outputs or claim media has been generated. No code, shell, URLs, "
                 "weights, secrets, or model configuration. The trusted VORAX Runtime will revalidate "
                 "every test. Do not reproduce an existing method if the Home index already covers it.\n"
-                "User X:\n" + args.task.strip()[:12000]
+                "User X:\n" + user_x
             )
-            _, teacher_result = request_json(
-                TEACHER_URL,
-                "/teacher/ask",
-                method="POST",
-                payload={"prompt": prompt, "model_id": model_id},
-                child_key=child_key,
-                timeout=120,
-            )
-            if teacher_result.get("remote_inference") is not True:
-                raise ConnectorError("Teacher did not confirm remote Inference Provider execution")
-            if teacher_result.get("kaggle_t4_used") is not False:
-                raise ConnectorError("Teacher returned incorrect Kaggle GPU provenance")
-            if teacher_result.get("weights_downloaded") is not False:
-                raise ConnectorError("Teacher reported a model weight download")
-            candidate = _candidate_from_teacher(str(teacher_result.get("response", "")))
+
+            # First model proposes; intermediate models critique; the last synthesizes one candidate.
+            consultations = []
+            initial_model = teacher_models[0]
+            initial_response = ask_remote_teacher(base_prompt, initial_model, child_key)
+            consultations.append({
+                "model_id": initial_model,
+                "provider_used": initial_response.get("provider_used"),
+                "remote_inference": True,
+                "kaggle_t4_used": False,
+                "role": "initial_proposer",
+            })
+            initial_candidate = _candidate_from_teacher(initial_response["response"])
+            candidate = initial_candidate
+            final_model = initial_model
+            final_response = initial_response
+
+            reviews = []
+            for reviewer_model in teacher_models[1:-1]:
+                review_prompt = (
+                    "Review this proposed V-Lang method for correctness, task coverage, safe bounded "
+                    "operations and executable test quality. Return concise JSON with keys "
+                    "issues, improvements, test_gaps. Do not return code or claim execution.\n"
+                    "User X:\n" + user_x + "\nProposal:\n"
+                    + json.dumps(initial_candidate, ensure_ascii=False)[:6500]
+                )
+                review = ask_remote_teacher(review_prompt, reviewer_model, child_key)
+                reviews.append({
+                    "model_id": reviewer_model,
+                    "review": review["response"][:3500],
+                })
+                consultations.append({
+                    "model_id": reviewer_model,
+                    "provider_used": review.get("provider_used"),
+                    "remote_inference": True,
+                    "kaggle_t4_used": False,
+                    "role": "independent_reviewer",
+                })
+
+            if len(teacher_models) > 1:
+                final_model = teacher_models[-1]
+                synthesis_prompt = (
+                    "Synthesize the independent teacher proposal and reviewer findings into exactly "
+                    "one final JSON V-Lang v1 method object with keys version,id,domain,task,triggers,"
+                    "inputs,steps,result,tests,provenance. Use only approved V-Lang operations or "
+                    "registered CALL TOOL contracts. Include at least two executable tests with exact "
+                    "expected outputs. No code, shell, arbitrary URLs, secrets, weights, model configs, "
+                    "fake tool results, or false media claims. The trusted VORAX Runtime revalidates it.\n"
+                    "User X:\n" + user_x
+                    + "\nInitial proposal:\n" + json.dumps(initial_candidate, ensure_ascii=False)[:5000]
+                    + "\nIndependent reviews:\n" + json.dumps(reviews, ensure_ascii=False)[:5000]
+                )
+                final_response = ask_remote_teacher(synthesis_prompt, final_model, child_key)
+                candidate = _candidate_from_teacher(final_response["response"])
+                consultations.append({
+                    "model_id": final_model,
+                    "provider_used": final_response.get("provider_used"),
+                    "remote_inference": True,
+                    "kaggle_t4_used": False,
+                    "role": "method_synthesizer",
+                })
+
+            report["knowledge"]["teacher_panel"] = {
+                "requested_count": args.teacher_count,
+                "consulted_count": len(consultations),
+                "consultations": consultations,
+                "all_remote": all(item["remote_inference"] is True for item in consultations),
+                "kaggle_t4_used": False,
+            }
             duplicate = home_duplicate_reason(home_index, candidate)
             if duplicate:
-                report["knowledge"] = {
+                report["knowledge"].update({
                     "status": "already_in_home",
                     "reason": duplicate,
                     "method_id": candidate.get("id"),
-                }
+                })
             else:
                 status, runtime_result = request_json(
                     RUNTIME_URL,
@@ -408,27 +468,27 @@ def main() -> int:
                     method="POST",
                     payload={
                         "method": candidate,
-                        "x": args.task.strip()[:12000],
-                        "teacher_model_id": model_id,
+                        "x": user_x,
+                        "teacher_model_id": final_model,
                         "child_id": CHILD_ID,
                         "api_key": child_key,
                     },
                     child_key=child_key,
                     timeout=180,
                 )
-                report["knowledge"] = {
+                report["knowledge"].update({
                     "status": runtime_result.get("status"),
-                    "teacher_model_id": model_id,
-                    "provider_used": teacher_result.get("provider_used"),
-                    "remote_inference": teacher_result.get("remote_inference"),
-                    "kaggle_t4_used": teacher_result.get("kaggle_t4_used"),
+                    "teacher_model_id": final_model,
+                    "provider_used": final_response.get("provider_used"),
+                    "remote_inference": final_response.get("remote_inference"),
+                    "kaggle_t4_used": final_response.get("kaggle_t4_used"),
                     "method_id": runtime_result.get("method"),
                     "method_sha256": runtime_result.get("method_sha256"),
                     "verification": runtime_result.get("verification"),
                     "vault": runtime_result.get("vault"),
                     "home_submission": runtime_result.get("home_submission"),
                     "http_status": status,
-                }
+                })
                 if runtime_result.get("status") not in {"verified", "unknown", "blocked"}:
                     raise ConnectorError("Runtime returned an unsupported verification status")
 
