@@ -52,6 +52,19 @@ class ChildProviderRoutingTests(unittest.TestCase):
         self.assertEqual(result, expected)
         execute.assert_called_once_with("image.generate", {"prompt": "cat"}, provider="kaggle-gpu")
 
+
+    def test_koyeb_cannot_execute_media_tool_directly(self):
+        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "koyeb"}), \
+             patch.object(vorax.api, "actor", return_value="koyeb-child"), \
+             patch.object(vorax.api, "execute_registered_tool") as execute:
+            with self.assertRaises(HTTPException) as caught:
+                vorax.api.tool_execute(
+                    {"tool": "image.generate", "inputs": {"prompt": "cat"}},
+                    scope(),
+                )
+        self.assertEqual(caught.exception.status_code, 409)
+        execute.assert_not_called()
+
     def test_non_kaggle_endpoint_cannot_request_kaggle_provider(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "koyeb"}), \
              patch.object(vorax.api, "actor", return_value="koyeb-child"), \
