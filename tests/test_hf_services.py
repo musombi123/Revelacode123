@@ -104,7 +104,8 @@ class RuntimeServiceTests(unittest.TestCase):
             ],
             "provenance": {"kind": "teacher", "teacher": "test-teacher"},
         }
-        with patch.object(hf_runtime, "write_pending_method", return_value={"status": "written_pending"}), \
+        with patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \
+             patch.object(hf_runtime, "write_pending_method", return_value={"status": "written_pending"}), \
              patch.object(hf_runtime, "submit_template", return_value={
                  "pull_request": "https://github.com/musombi123/Revelacode123/pull/999",
                  "number": 999, "branch": "child/kaggle-child/test",
