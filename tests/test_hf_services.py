@@ -28,7 +28,11 @@ class TeacherServiceTests(unittest.TestCase):
     def test_ask_uses_remote_router_and_authenticates_child(self):
         response = {"choices": [{"message": {"content": "A bounded teaching response."}}]}
         headers = {"x-inference-provider": "test-remote-provider", "x-request-id": "request-1"}
-        with patch.dict(os.environ, {"HF_TOKEN": "not-a-real-token"}), \
+        with patch.dict(os.environ, {
+                 "HF_TOKEN": "not-a-real-token",
+                 "VORAX_CHILD_ID": "kaggle-child",
+                 "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
+             }), \
              patch.object(hf_teacher, "_http_json", return_value=(response, headers)) as call, \
              patch.object(hf_teacher, "_log") as log:
             result = hf_teacher.ask(
