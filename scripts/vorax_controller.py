@@ -395,8 +395,8 @@ def heartbeat():
                     verification="not_executed", uptime_status="queued",
                     queue_issue=issue.get("number"), queue_url=issue.get("html_url"))
                 payload["controller_seen_at"] = stamp()
-                body = "<!-- VORAX_X_QUEUE_V1 -->\\n" + json.dumps(payload, ensure_ascii=False, indent=2) + (
-                    "\\n\\nDo not put passwords, API keys, private records, or sensitive personal data in this queue."
+                body = "<!-- VORAX_X_QUEUE_V1 -->\n" + json.dumps(payload, ensure_ascii=False, indent=2) + (
+                    "\n\nDo not put passwords, API keys, private records, or sensitive personal data in this queue."
                 )
                 gh("PATCH", f"/repos/{REPO}/issues/{issue['number']}", {"body": body})
     if pending and state in {"running", "queued", "start_requested", "status_unknown"}:
