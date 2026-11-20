@@ -50,6 +50,15 @@ def kaggle_secret(name: str, required: bool = False) -> str:
     return value
 
 
+
+def resolve_task_input(cli_task: str = "", env_task: str = "", secret_task: str = "") -> str:
+    """Resolve one task without ever logging its contents; explicit input wins."""
+    for candidate in (cli_task, env_task, secret_task):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()[:12000]
+    return ""
+
+
 def request_json(
     base_url: str,
     path: str,
@@ -354,6 +363,8 @@ def main() -> int:
     try:
         home_read = kaggle_secret("VORAX_HOME_READ_TOKEN", required=True)
         child_key = kaggle_secret("VORAX_KAGGLE_CHILD_API_KEY", required=True)
+        task_secret = kaggle_secret("VORAX_X", required=False)
+        task_input = resolve_task_input(args.task, os.getenv("VORAX_X", ""), task_secret)
 
         # The connector deliberately does not request Home write or Vault credentials.
         # Runtime alone opens Home PRs and writes to the private Dataset Vault.
@@ -361,6 +372,12 @@ def main() -> int:
             "VORAX_HOME_READ_TOKEN": {"available": True, "used_for": "direct_metadata_index_read_only"},
             "VORAX_HOME_WRITE_TOKEN": {"requested_by_connector": False, "authority": "Runtime_only"},
             "VORAX_KAGGLE_CHILD_API_KEY": {"available": True, "used_for": "Teacher_and_Runtime_auth"},
+            "VORAX_X": {
+                "requested_by_connector": True,
+                "available": bool(task_secret),
+                "content_logged": False,
+                "used_for": "optional_one_run_learning_request" if task_secret else "not_configured",
+            },
             "HF_VAULT_TOKEN": {"requested_by_connector": False, "authority": "Runtime_only"},
             "HF_READ_TOKEN": {"requested_by_connector": False, "authority": "Teacher_only"},
             "LEGEND_TEACHER_API_KEY": {"requested_by_connector": False, "authority": "Teacher_only"},
@@ -402,10 +419,10 @@ def main() -> int:
             )
 
         report["status"] = "connector_ready"
-        if not args.task.strip():
+        if not task_input:
             report["knowledge"] = {
                 "status": "not_requested",
-                "note": "Supply --task or VORAX_X to ask a remote Teacher and propose one method.",
+                "note": "No task was supplied; health, Home metadata and discovery checks completed without inference.",
             }
         else:
             teacher_models = choose_teacher_models(
@@ -415,7 +432,7 @@ def main() -> int:
             )
             if not teacher_models:
                 raise ConnectorError("No text-capable models were found in the metadata catalogue")
-            user_x = args.task.strip()[:12000]
+            user_x = task_input
             base_prompt = (
                 "Teach VORAX how to perform the user's task as one bounded V-Lang v1 method. "
                 "Use only approved V-Lang operations or a registered CALL TOOL contract. "
