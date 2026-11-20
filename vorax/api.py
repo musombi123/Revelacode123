@@ -224,16 +224,8 @@ def tool_execute(body: dict, request: Request):
     if not isinstance(inputs,dict) or len(__import__("json").dumps(inputs,ensure_ascii=False).encode("utf-8")) > 45*1024*1024:
         raise HTTPException(413,"Tool input must be an object under 45MB")
     # No request URL, arbitrary model ID, code string execution, or caller credentials.
-    role=os.getenv("VORAX_CHILD_ROLE","").strip().lower()
-    media_tools={"image.generate","audio.tts","audio.transcribe","video.generate","music.generate"}
-    if provider=="kaggle-gpu" and role!="kaggle":
-        raise HTTPException(403,"Kaggle GPU provider is only available inside the Kaggle Child runtime")
-    if role=="koyeb" and name in media_tools:
-        raise HTTPException(409,"Koyeb does not execute media tools directly; submit Input X for Kaggle routing")
-    if role=="kaggle" and name in media_tools:
-        provider="kaggle-gpu"
-    elif provider=="kaggle-gpu":
-        raise HTTPException(403,"Kaggle GPU provider is only available inside the Kaggle Child runtime")
+    if provider == "kaggle-gpu":
+        raise HTTPException(403, "Kaggle is a remote Learning Connector, not a local media execution provider")
     result=execute_registered_tool(name,inputs,provider=provider)
     if result.get("status") != "verified":
         return result
@@ -251,7 +243,7 @@ def tool_artifact(artifact_id: str, request: Request):
     return FileResponse(path,media_type=media,filename=artifact_id)
 
 
-# Shared Home cache: refresh periodically so every VORAX child sees merged methods.
+# Shared Home metadata cache: Children receive index summaries, never method bodies.
 _HOME_INDEX = None
 _HOME_INDEX_AT = 0.0
 
