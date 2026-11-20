@@ -153,12 +153,12 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
 
     models = list(first.get("models") or [])
     resources = list(first.get("resources") or [])
-    cursors = dict(first.get("next_cursors") or {})
+    source_cursors = dict(first.get("next_cursors") or {})
     pages_by_source = {"models": 1, "spaces": 1, "datasets": 1}
     remaining = {}
 
     for source in ("models", "spaces", "datasets"):
-        cursor = cursors.get(source)
+        cursor = source_cursors.get(source)
         while cursor and pages_by_source[source] < page_limit:
             next_query = urllib.parse.urlencode({
                 "query": query[:160],
@@ -173,8 +173,8 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
             resources.extend(page_resources)
             if source == "models":
                 models.extend(page.get("models") or [])
-            cursors = dict(page.get("next_cursors") or {source: page.get("next_cursor")})
-            cursor = cursors.get(source)
+            page_cursors = dict(page.get("next_cursors") or {source: page.get("next_cursor")})
+            cursor = page_cursors.get(source)
             pages_by_source[source] += 1
         remaining[source] = bool(cursor)
     return {
