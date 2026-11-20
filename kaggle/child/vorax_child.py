@@ -114,7 +114,12 @@ def start_runtime(env):
 
 
 def queue_issues(queue_token: str):
-    issues = github("GET", f"/repos/{REPO}/issues?state=open&per_page=100", queue_token)
+    issues = []
+    for page in range(1, 6):
+        batch = github("GET", f"/repos/{REPO}/issues?state=open&per_page=100&page={page}", queue_token)
+        issues.extend(batch)
+        if len(batch) < 100:
+            break
     found = []
     for issue in issues:
         if "pull_request" in issue or not str(issue.get("title", "")).startswith("[VORAX-X]"):
