@@ -1,0 +1,181 @@
+"""VORAX Teacher Service: metadata discovery and remote, weight-free model calls."""
+from __future__ import annotations
+
+import hmac
+import json
+import logging
+import os
+import re
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+
+LOGGER = logging.getLogger("vorax.teacher-service")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+HF_MODELS_API = "https://huggingface.co/api/models"
+HF_CHAT_API = "https://router.huggingface.co/v1/chat/completions"
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$")
+MAX_PROMPT_CHARS = 12_000
+
+app = FastAPI(
+    title="VORAX Teacher Service",
+    version="1.0.0",
+    description="Remote Hugging Face Inference Providers gateway; no local model weights.",
+)
+
+
+class TeacherAsk(BaseModel):
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    model_id: str = Field(min_length=3, max_length=220)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _log(event: str, **fields) -> None:
+    LOGGER.info(json.dumps({"event": event, "timestamp": _utc_now(), **fields}, ensure_ascii=False))
+
+
+def _authenticate_child(child_id: str | None, child_key: str | None) -> str:
+    expected_id = os.getenv("VORAX_CHILD_ID", "kaggle-child").strip()
+    expected_key = os.getenv("VORAX_KAGGLE_CHILD_API_KEY", "").strip()
+    if not expected_key:
+        raise HTTPException(503, "Teacher child authentication is not configured")
+    if not child_id or child_id != expected_id or not child_key or not hmac.compare_digest(child_key, expected_key):
+        raise HTTPException(403, "Authenticated VORAX Learning Connector required")
+    return child_id
+
+
+def _http_json(url: str, *, token: str = "", body: dict | None = None, timeout: int = 25):
+    headers = {"Accept": "application/json", "User-Agent": "VORAX-Teacher-Service/1.0"}
+    data = None
+    method = "GET"
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    if body is not None:
+        method = "POST"
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raise HTTPException(502, "Hugging Face response exceeded the metadata/response limit")
+            return json.loads(raw.decode("utf-8")), dict(response.headers)
+    except urllib.error.HTTPError as exc:
+        if body is None:
+            raise HTTPException(502, f"Hugging Face metadata API returned HTTP {exc.code}") from exc
+        # Do not echo upstream response bodies; they can contain sensitive provider diagnostics.
+        if exc.code in {401, 403}:
+            raise HTTPException(502, "Hugging Face rejected the configured access token or permissions") from exc
+        raise HTTPException(502, f"Remote Inference Provider returned HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(502, "Hugging Face request failed: " + type(exc).__name__) from exc
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "teacher",
+        "remote_inference_configured": bool(os.getenv("HF_TOKEN")),
+        "metadata_token_configured": bool(os.getenv("HF_READ_TOKEN")),
+        "weights_downloaded": False,
+        "local_model_loaded": False,
+        "kaggle_t4_used": False,
+    }
+
+
+@app.get("/teacher/discover")
+def discover(
+    query: str = Query(default="", max_length=160),
+    limit: int = Query(default=10, ge=1, le=30),
+):
+    """Return Hub catalog metadata only; this route never fetches model files."""
+    params = {"limit": str(limit), "sort": "downloads", "direction": "-1"}
+    if query.strip():
+        params["search"] = query.strip()
+    url = HF_MODELS_API + "?" + urllib.parse.urlencode(params)
+    payload, _ = _http_json(url, token=os.getenv("HF_READ_TOKEN", "").strip(), timeout=20)
+    if not isinstance(payload, list):
+        raise HTTPException(502, "Hugging Face model discovery returned an unexpected response")
+    models = []
+    for item in payload[:limit]:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+        models.append({
+            "id": item["id"],
+            "tags": [str(tag)[:100] for tag in tags[:40]],
+            "downloads": int(item.get("downloads") or 0),
+            "likes": int(item.get("likes") or 0),
+        })
+    return {
+        "status": "metadata_only",
+        "models": models,
+        "models_found": len(models),
+        "weights_downloaded": False,
+        "local_model_loaded": False,
+    }
+
+
+@app.post("/teacher/ask")
+def ask(
+    body: TeacherAsk,
+    x_child_id: str | None = Header(default=None, alias="x-child-id"),
+    x_child_key: str | None = Header(default=None, alias="x-child-key"),
+):
+    child_id = _authenticate_child(x_child_id, x_child_key)
+    model_id = body.model_id.strip()
+    if not MODEL_ID_RE.fullmatch(model_id):
+        raise HTTPException(422, "model_id must be a Hugging Face model ID with optional provider suffix")
+    token = os.getenv("HF_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(503, "HF_TOKEN is not configured for remote Inference Providers")
+    payload = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": "You are a VORAX capability teacher. Be factual, provide a method that can be represented as bounded, testable V-Lang data, and never claim that tests or artifacts were executed when they were not."},
+            {"role": "user", "content": body.prompt},
+        ],
+        "temperature": 0,
+        "max_tokens": 1600,
+        "stream": False,
+    }
+    response, headers = _http_json(HF_CHAT_API, token=token, body=payload, timeout=90)
+    try:
+        content = response["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise HTTPException(502, "Remote Inference Provider returned no assistant content") from exc
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(502, "Remote Inference Provider returned empty assistant content")
+    provider = headers.get("x-inference-provider") or headers.get("X-Inference-Provider") or "unknown"
+    request_id = headers.get("x-request-id") or headers.get("X-Request-Id") or None
+    _log(
+        "teacher_remote_inference",
+        child_id=child_id,
+        model_id=model_id,
+        provider_used=provider,
+        remote_inference=True,
+        kaggle_t4_used=False,
+        local_model_loaded=False,
+        weights_downloaded=False,
+        request_id=request_id,
+    )
+    return {
+        "status": "teacher_response",
+        "model_id": model_id,
+        "provider_used": provider,
+        "remote_inference": True,
+        "kaggle_t4_used": False,
+        "weights_downloaded": False,
+        "response": content,
+        "request_id": request_id,
+    }
