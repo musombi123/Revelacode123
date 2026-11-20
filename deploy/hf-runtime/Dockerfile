@@ -15,7 +15,6 @@ COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY vorax /app/vorax
-COPY templates /app/templates
 COPY app.py /app/app.py
 
 RUN mkdir -p /tmp/vorax-runtime
