@@ -208,6 +208,27 @@ def _upload(api, repo: str, path: str, data: bytes, commit_message: str) -> None
 
 
 
+
+def pending_duplicate_reason(record: dict) -> str | None:
+    """Use only pending-index metadata to prevent two Children proposing the same method."""
+    api, repo = _client()
+    pending = _read_json(api, repo, "vlang/pending/index.json", {"version": "vlang-index/1", "records": []})
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        if item.get("id") == record.get("id"):
+            return "method_id_already_pending"
+        if (
+            str(item.get("domain", "")).casefold() == str(record.get("domain", "")).casefold()
+            and str(item.get("task", "")).casefold() == str(record.get("task", "")).casefold()
+        ):
+            return "method_task_already_pending"
+    return None
+
+
 def write_pending_method(record: dict, *, child_id: str, verification: dict) -> dict:
     """Runtime-only write of a method that passed the trusted V-Lang interpreter."""
     from .vlang import CHILD_RE, dump_record, validate_template
@@ -246,8 +267,20 @@ def write_pending_method(record: dict, *, child_id: str, verification: dict) -> 
     current = next((item for item in records if isinstance(item, dict) and item.get("id") == method_id), None)
     if current and current.get("sha256") != method_sha:
         raise VaultError("Pending index contains a conflicting method checksum")
+    if not current:
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            if (
+                str(item.get("domain", "")).casefold() == record["domain"].casefold()
+                and str(item.get("task", "")).casefold() == record["task"].casefold()
+            ):
+                raise VaultError("An equivalent V-Lang task is already pending in the Vault")
     entry = {
         "id": method_id,
+        "domain": record["domain"],
+        "task": record["task"],
+        "triggers": list(record["triggers"]),
         "path": target,
         "sha256": method_sha,
         "size_bytes": len(raw),
