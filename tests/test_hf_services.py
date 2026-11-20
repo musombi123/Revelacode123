@@ -25,7 +25,24 @@ class TeacherServiceTests(unittest.TestCase):
                 "sha": "ignored",
             },
         ]
-        with patch.object(hf_teacher, "_http_json", return_value=(metadata, {})) as call:
+        router_models = [{
+            "id": "acme/example",
+            "providers": [{
+                "provider": "provider-a",
+                "status": "live",
+                "provider_model_id": "acme/example",
+                "task": "conversational",
+                "context_length": 8192,
+                "pricing": {"input": 0.1, "output": 0.2},
+                "first_token_latency_ms": 100,
+                "throughput": 20,
+                "supports_tools": True,
+                "supports_structured_output": True,
+                "is_free": False,
+            }],
+        }]
+        with patch.object(hf_teacher, "_http_json", return_value=(metadata, {})) as call, \
+             patch.object(hf_teacher, "_discover_router_models", return_value=router_models):
             result = hf_teacher.discover(query="example", limit=3, source="models")
         self.assertEqual(result["status"], "metadata_only")
         self.assertEqual(result["models"], [{
@@ -34,7 +51,10 @@ class TeacherServiceTests(unittest.TestCase):
             "pipeline_tag": "text-generation", "library_name": None, "sdk": None,
             "providers": [{
                 "provider": "provider-a", "status": "live",
-                "provider_model_id": "acme/example-a", "task": "conversational",
+                "provider_model_id": "acme/example", "task": "conversational",
+                "context_length": 8192, "pricing": {"input": 0.1, "output": 0.2},
+                "first_token_latency_ms": 100, "throughput": 20,
+                "supports_tools": True, "supports_structured_output": True, "is_free": False,
             }],
         }])
         self.assertIs(result["weights_downloaded"], False)
