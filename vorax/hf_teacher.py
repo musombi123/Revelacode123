@@ -88,6 +88,7 @@ def health():
         "service": "teacher",
         "remote_inference_configured": bool(os.getenv("HF_TOKEN")),
         "metadata_token_configured": bool(os.getenv("HF_READ_TOKEN")),
+        "attestation_configured": len(os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()) >= 32,
         "weights_downloaded": False,
         "local_model_loaded": False,
         "kaggle_t4_used": False,
@@ -188,6 +189,26 @@ def discover(
         "local_model_loaded": False,
     }
 
+def _attest_response(model_id: str, provider: str, content: str, request_id: str | None) -> dict:
+    """Sign remote Teacher provenance for Runtime verification; Kaggle never receives the key."""
+    secret = os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()
+    if len(secret) < 32:
+        raise HTTPException(503, "Teacher attestation key is not configured")
+    payload = {
+        "model_id": model_id,
+        "provider_used": provider,
+        "remote_inference": True,
+        "kaggle_t4_used": False,
+        "weights_downloaded": False,
+        "response_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "request_id": request_id,
+        "issued_at": int(time.time()),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    signature = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    return {"algorithm": "hmac-sha256", "payload": payload, "signature": signature}
+
+
 @app.post("/teacher/ask")
 def ask(
     body: TeacherAsk,
@@ -220,6 +241,7 @@ def ask(
         raise HTTPException(502, "Remote Inference Provider returned empty assistant content")
     provider = headers.get("x-inference-provider") or headers.get("X-Inference-Provider") or "unknown"
     request_id = headers.get("x-request-id") or headers.get("X-Request-Id") or None
+    attestation = _attest_response(model_id, provider, content, request_id)
     _log(
         "teacher_remote_inference",
         child_id=child_id,
@@ -230,6 +252,7 @@ def ask(
         local_model_loaded=False,
         weights_downloaded=False,
         request_id=request_id,
+        attestation="signed",
     )
     return {
         "status": "teacher_response",
@@ -240,4 +263,5 @@ def ask(
         "weights_downloaded": False,
         "response": content,
         "request_id": request_id,
+        "attestation": attestation,
     }
