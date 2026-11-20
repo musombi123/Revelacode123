@@ -221,11 +221,14 @@ def pending_duplicate_reason(record: dict) -> str | None:
             continue
         if item.get("id") == record.get("id"):
             return "method_id_already_pending"
-        if (
-            str(item.get("domain", "")).casefold() == str(record.get("domain", "")).casefold()
-            and str(item.get("task", "")).casefold() == str(record.get("task", "")).casefold()
-        ):
+        item_domain = str(item.get("domain", "")).casefold()
+        record_domain = str(record.get("domain", "")).casefold()
+        if item_domain == record_domain and str(item.get("task", "")).casefold() == str(record.get("task", "")).casefold():
             return "method_task_already_pending"
+        item_triggers = {str(value).casefold() for value in item.get("triggers", [])}
+        record_triggers = {str(value).casefold() for value in record.get("triggers", [])}
+        if item_domain == record_domain and item_triggers.intersection(record_triggers):
+            return "method_trigger_already_pending"
     return None
 
 
