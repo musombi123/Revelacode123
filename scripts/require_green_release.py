@@ -43,7 +43,7 @@ def latest_verify_check(check_runs: list[dict], commit_sha: str) -> dict:
         if check.get("name") != "verify":
             continue
         suite_sha = (check.get("check_suite") or {}).get("head_sha")
-        if suite_sha and suite_sha.lower() != commit_sha.lower():
+        if not suite_sha or suite_sha.lower() != commit_sha.lower():
             continue
         matches.append(check)
     if not matches:
