@@ -22,7 +22,7 @@ VORAX is a **learning engine, not a model**. One Input X, one V-Lang, one shared
 | **Musombi/vorax-runtime-service** | Hugging Face Docker Space | Shared VORAX runtime, Child authentication, trusted method verification, Vault pending writes and Home PRs |
 | **Musombi/revelacode-vorax-vault** | Existing private Hugging Face Dataset | Pending/verified V-Lang, checksums, reports and real verified artifacts |
 
-Kaggle is not a GPU image worker. The Teacher calls remote provider infrastructure; it never claims Kaggle T4 use. The Runtime does not load model weights. The two Spaces are public HTTP endpoints with Child-key authentication; the Vault remains a private Dataset.
+Kaggle is not a GPU image worker. The Teacher calls remote provider infrastructure; it never claims Kaggle T4 use. The Runtime does not load model weights. The two Spaces are public HTTP endpoints with Child-key authentication; the Vault remains a private Dataset. Hugging Face currently requires PRO on personal accounts to create Docker Spaces, and its current Free-tier Inference Providers pricing lists no monthly credits; the code therefore remains release-gated and does not run inference during deployment unless explicitly requested.
 
 ## Hugging Face implementation
 
