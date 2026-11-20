@@ -184,19 +184,54 @@ def discover_world(query: str, page_limit: int = 5) -> dict:
     }
 
 
-def choose_teacher_model(models: list[dict], requested: str = "") -> str:
-    if requested.strip():
-        return requested.strip()
+def choose_teacher_models(models: list[dict], requested: str = "", count: int = 3) -> list[str]:
+    """Select a bounded panel of distinct remote teacher models from metadata."""
     if not models:
         raise ConnectorError("Teacher metadata discovery returned no models to query")
+    preferred = []
     for item in models:
         pipeline = str(item.get("pipeline_tag") or "").casefold()
         tags = " ".join(str(x).casefold() for x in item.get("tags", []))
-        model_id = str(item.get("id") or "")
-        if "text-generation" in pipeline or "text-generation" in tags or "instruct" in model_id.casefold():
-            return model_id
-    return str(models[0].get("id") or "")
+        model_id = str(item.get("id") or "").strip()
+        if model_id and (
+            "text-generation" in pipeline
+            or "text-generation" in tags
+            or "conversational" in pipeline
+            or "instruct" in model_id.casefold()
+        ):
+            preferred.append(model_id)
+    all_ids = list(dict.fromkeys(preferred + [
+        str(item.get("id") or "").strip() for item in models if item.get("id")
+    ]))
+    selected = []
+    if requested.strip():
+        selected.append(requested.strip())
+    for model_id in all_ids:
+        if model_id and model_id not in selected:
+            selected.append(model_id)
+        if len(selected) >= count:
+            break
+    return selected[:count]
 
+
+def ask_remote_teacher(prompt: str, model_id: str, child_key: str) -> dict:
+    _, response = request_json(
+        TEACHER_URL,
+        "/teacher/ask",
+        method="POST",
+        payload={"prompt": prompt[:12000], "model_id": model_id},
+        child_key=child_key,
+        timeout=120,
+    )
+    if response.get("remote_inference") is not True:
+        raise ConnectorError(f"Teacher {model_id} did not confirm remote Inference Provider execution")
+    if response.get("kaggle_t4_used") is not False:
+        raise ConnectorError(f"Teacher {model_id} returned incorrect Kaggle GPU provenance")
+    if response.get("weights_downloaded") is not False:
+        raise ConnectorError(f"Teacher {model_id} reported a model weight download")
+    if not isinstance(response.get("response"), str) or not response["response"].strip():
+        raise ConnectorError(f"Teacher {model_id} returned no teaching response")
+    return response
 
 def _candidate_from_teacher(response: str) -> dict:
     text = response.strip()
