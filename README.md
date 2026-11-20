@@ -10,15 +10,15 @@ VORAX is one shared runtime and one V-Lang method system. Hosting platforms are 
 
 ## Locked runtime topology
 
-| Component | Responsibility | Honest availability |
+| Component | Responsibility | Phase 1 status |
 |---|---|---|
-| GitHub Actions | Release-gated scheduler; reads the latest published release, pings Children, checks Kaggle status, starts a bounded Kaggle run when queued X exists, records evidence and finalizes the 7-day campaign | Scheduler workflow is configured on Home; it checks out the latest published release before running VORAX controller code |
-| Koyeb | Lightweight shared `vorax/` HTTP runtime; `GET /health`, `POST /vorax/x`; quick deterministic/text X; queues heavy X for Kaggle | Free service may scale to zero. A ping is best-effort, not an uptime guarantee |
-| Kaggle | Ephemeral research worker using the same shared `vorax/` package and V-Lang; checks real NVIDIA telemetry; processes queued tasks only while its kernel session is running | Not a permanent API. The controller starts a bounded run when a queue exists; availability and quotas are Kaggle-controlled |
-| Hugging Face Space | Backup Docker Child running the same shared runtime | Backup only; deploy and health must be verified separately |
-| Hugging Face Dataset | Private Vault mirror of Home-merged methods, independently verified artifacts, indexes and reports | Capacity is not presumed to be 1 TB; quota must be checked in the account |
+| GitHub Actions | Release-gated controller; queues X, starts Kaggle on demand, and records worker/Vault evidence | Controller configuration is present; CI runner allocation is currently blocked |
+| Kaggle (`musombiwilliam`) | Ephemeral GPU worker using the shared `vorax/` runtime; reads queued X, records actual GPU telemetry, then exits | **Selected first.** Not an always-on API. Free GPU quota and availability are account/session controlled |
+| Hugging Face Dataset (`Musombi/revelacode-vorax-vault`) | Private Vault for Home-merged V-Lang methods, independently verified artifacts, indexes and reports | **Selected first.** Separate storage resource; no live compute is implied |
+| Hugging Face Docker Space (`Musombi/revelacode-vorax-child`) | Optional backup HTTP Child using the shared runtime | Parked until HF plan/eligibility is confirmed; Docker compute Spaces require PRO on personal accounts |
+| Koyeb | Optional lightweight HTTP router for quick X, with heavy X queued to Kaggle | Parked for a later hosting review; do not deploy in Phase 1 |
 
-The controller cron is `17,47 * * * *`. It does not run VORAX itself on the GitHub runner. Before executing, it resolves the latest published GitHub Release and checks out that tag; the Kaggle kernel is pushed from the same immutable tag. It probes Koyeb and the HF backup, checks Kaggle kernel status, and starts Kaggle only when queued work exists and no active session is observed. A Koyeb 502/503 is logged as “Koyeb asleep, retry later” rather than counted as a permanent Child failure.
+The controller cron is `17,47 * * * *`. It does not run VORAX itself on the GitHub runner. Before executing, it resolves the latest published GitHub Release and checks out that tag; the Kaggle kernel is pushed from the same immutable tag and verifies the exact checkout SHA. In Phase 1 it checks Kaggle kernel status and starts a bounded run only when queued X exists and no active session is observed. Koyeb and the HF HTTP backup remain optional, unconfigured probes; neither is counted as live or required for the two-platform rollout.
 
 ## Input X routing
 
@@ -41,13 +41,15 @@ Both PR gates check out the trusted base revision. They do not execute scripts s
 
 ## Deploy and configure
 
-Deployment workflows run on a **published GitHub Release** or a manual dispatch against that release tag. Every deploy checks out the exact tag SHA and calls `scripts/require_green_release.py`, which fails closed unless the tag is published, resolves to the run SHA, is contained in current `main`, and the latest exact-SHA `verify` check is completed with `success`. Dispatching from a branch is rejected. Workflow files are configuration, not evidence that any external Child is live.
+**Phase 1 is Kaggle + the Hugging Face Dataset Vault.** Koyeb is parked. The HF Docker backup is optional and remains off until the Hugging Face plan is confirmed.
 
-Koyeb is deployed with the release SHA and then configured with `--git-no-deploy-on-push`; a later push to `main` must not redeploy it. The Koyeb deploy workflow is still manual/release-triggered, but the Koyeb service itself must have native branch auto-deploy disabled. Kaggle's worker receives a `vorax-release.json` pin and verifies the cloned commit SHA before starting the shared runtime. The Self-Ping Controller checks out the latest published release before running, so it cannot republish current `main` code over the released kernel.
+Deployment workflows run from a **published GitHub Release** or a manual dispatch against that release tag. Every deploy checks out the exact tag SHA and calls `scripts/require_green_release.py`, which fails closed unless the tag is published, resolves to the run SHA, is contained in current `main`, and the latest exact-SHA `verify` check is completed with `success`. Dispatching from a branch is rejected. Workflow files are configuration, not evidence that an external Child is live.
 
-### Koyeb
+Kaggle's worker receives a `vorax-release.json` pin and verifies the cloned commit SHA before starting the shared runtime. The Self-Ping Controller checks out the latest published release before running, so it cannot publish current `main` code over the released kernel. The dormant Koyeb workflow is manual-only and must not be dispatched during Phase 1.
 
-Workflow: `.github/workflows/deploy-koyeb-child.yml` (published-release event or manual dispatch from a release tag)
+### Koyeb — parked
+
+Workflow: `.github/workflows/deploy-koyeb-child.yml` (manual dispatch from a release tag only). Do not configure Koyeb secrets or deploy it in Phase 1.
 
 Required GitHub Actions secrets:
 - `KOYEB_API_TOKEN`
@@ -65,45 +67,44 @@ The Koyeb workflow creates service secrets and deploys the shared root Dockerfil
 
 Set repository variable `VORAX_KOYEB_URL` to the service base URL for the controller.
 
-### Kaggle
+### Kaggle — selected Phase 1 GPU worker
 
-Workflow: `.github/workflows/deploy-kaggle-child.yml` (published-release event or manual dispatch from a release tag)
+Account: [kaggle.com/musombiwilliam](https://www.kaggle.com/musombiwilliam)
 
-Required GitHub Actions secrets:
-- `KAGGLE_USERNAME`
-- `KAGGLE_KEY`
+Workflow: `.github/workflows/deploy-kaggle-child.yml` (published-release event or manual dispatch from a release tag). The username is fixed in the workflow as `musombiwilliam`; it is not a secret.
 
-Variable:
-- `KAGGLE_KERNEL_SLUG` — for example `revelacode-vorax-child`
+Required GitHub Actions secret:
+- `KAGGLE_KEY` — Kaggle API token/key. Never commit it or paste it into chat.
 
-The publish workflow uses `kaggle kernels push --no-run`: it publishes the selected release source and its SHA pin but does not start a GPU session. The Self-Ping Controller starts the configured kernel when queued work exists, using the latest published release source. The worker refuses to clone a different commit from the release pin. A live GPU session still requires a completed Kaggle run report with actual `nvidia-smi` evidence. Optional variable `KAGGLE_ACCELERATOR` defaults to `NvidiaTeslaT4`.
+Optional repository variable:
+- `KAGGLE_KERNEL_SLUG` — defaults to `revelacode-vorax-child`.
+
+The publish workflow uses `kaggle kernels push --no-run`: it publishes the selected release source and its SHA pin but does not start a GPU session. The Self-Ping Controller starts the configured kernel when queued work exists, using the latest published release source. The worker refuses to clone a different commit from the release pin. A live GPU session still requires a completed Kaggle run report with actual `nvidia-smi` evidence. The accelerator defaults to `NvidiaTeslaP100`, matching Kaggle's documented free GPU baseline; set `KAGGLE_ACCELERATOR` only when the account exposes another available accelerator. Kaggle currently documents a weekly GPU quota of around 30 hours, sometimes higher depending on demand and resources.
 
 Add these Kaggle Notebook secrets in the Kaggle account settings:
 - `VORAX_HOME_READ_TOKEN`
 - `VORAX_HOME_WRITE_TOKEN`
 - `VORAX_KAGGLE_CHILD_API_KEY`
+- `HF_VAULT_TOKEN` — write permission for the private Dataset `Musombi/revelacode-vorax-vault`
 
 Optional Kaggle Notebook secrets:
 - `VORAX_CHILD_PROPOSAL_TOKEN` (otherwise the Home write token is used)
-- `HF_VAULT_TOKEN`
 - `HF_INFERENCE_TOKEN`
 - `LEGEND_TEACHER_API_KEY`
 - `LEGEND_TEACHER_MODEL`
 - `LEGEND_TEACHER_BASE_URL`
 
-Set repository variables `VORAX_KOYEB_URL`, `VORAX_HF_CHILD_URL`, and `KAGGLE_KERNEL_SLUG` for the controller. The Kaggle run timeout defaults to 42,000 seconds, below the 12-hour session ceiling in the current configuration; actual availability and quota remain platform-controlled.
+Set repository variable `KAGGLE_KERNEL_SLUG` only if you want a non-default kernel name. Do not set Koyeb or HF Child URLs in Phase 1. Kaggle remains an on-demand notebook worker, not an always-on API; the account's quota and session availability must be read from Kaggle itself.
 
-### Hugging Face backup Child and Vault
+### Hugging Face — selected Phase 1 Vault, optional Space later
 
-Workflow: `.github/workflows/deploy-hf-child.yml` (published-release event or manual dispatch from a release tag)
+Account: [huggingface.co/Musombi](https://huggingface.co/Musombi). The selected Vault is the **private Dataset** `Musombi/revelacode-vorax-vault`. The Kaggle worker's first successful Vault sync creates it as private if it does not exist, then verifies that the existing repository is private before uploading anything. If it is public, sync fails closed.
 
-Required GitHub Actions secret: `HF_SPACE_TOKEN`, with permission to create/update the target Space.
+Add `HF_VAULT_TOKEN` as a **Kaggle Notebook secret**, with write access to that Dataset. Do not put it in source code. Free Hugging Face accounts currently have 100 GB of private storage across Hub repositories; this is an account-wide limit, not 100 GB per Dataset. Check remaining storage before uploading large media.
 
-Exact repositories:
-- Docker Space: `Musombi/revelacode-vorax-child`
-- Private Dataset Vault: `Musombi/revelacode-vorax-vault`
+The optional backup Docker Space is `Musombi/revelacode-vorax-child`. Its deployment is manual-only in `.github/workflows/deploy-hf-child.yml`; it requires `HF_SPACE_TOKEN` and a plan that permits creating/running Docker Spaces. Hugging Face currently states that personal Docker/Gradio compute Spaces require PRO; free personal accounts may instead host up to two Gradio ZeroGPU Spaces, subject to eligibility. The account's plan has not been verified, so do not trigger this workflow or purchase PRO as part of Phase 1.
 
-Configure the Space with `VORAX_CHILD_ID=hf-child`, `VORAX_CHILD_API_KEY`, Home read credentials, and the optional inference/teacher settings needed by that Space. For Vault writes, configure `HF_VAULT_TOKEN` and `HF_VAULT_REPO=Musombi/revelacode-vorax-vault`. A Docker Space GPU is not implied by remote HF inference.
+The public profile currently lists `Musombi/mvi-ai-engine` and `Musombi/OmniMind` as existing Spaces. `MVI AI Engine` is an existing service, while `OmniMind` currently shows the Docker starter page without an application file. The public Dataset `Musombi/Omnset` currently shows as empty. These existing resources are not the VORAX Vault or VORAX Child and must not be overwritten or repurposed without explicit approval.
 
 ### Start the 7-day campaign
 
@@ -130,10 +131,10 @@ docker build --tag revelacode-vorax:local .
 **GO / NO-GO remains BLOCKED.** This PR establishes deployment/configuration workflows, honest health checks, X queueing, the controller, data-only trust gates and structured Vault sync. It does not establish that the external services have been deployed or that Kaggle media generation works.
 
 Home must still collect and verify:
-1. Live Koyeb, Kaggle-session and HF Child evidence.
-2. Actual Kaggle local GPU execution plus real non-empty PNG, WAV and MP4 with SHA-256 and size.
-3. Confirmed HF Vault quota and successful sync evidence.
-4. At least one Koyeb-origin and one Kaggle-origin V-Lang method independently validated and merged by Home.
-5. At least 90% verified common-X coverage, the complete seven-day campaign, and green CI/security checks.
+1. A real Kaggle session report with confirmed NVIDIA GPU telemetry.
+2. Successful sync to the private HF Dataset Vault, with at least one Home-merged V-Lang method and one independently verified real artifact, including SHA-256 and size.
+3. Real locally generated media per modality: non-empty PNG, non-silent WAV and decodable MP4. A synthetic Vault smoke-test file does not count as GPU generation proof.
+4. At least one Kaggle-origin V-Lang method independently validated and merged by Home.
+5. At least 90% verified common-X coverage, the complete seven-day campaign, green CI/security checks, and separate live health proof for any optional HTTP Child that is enabled.
 
 AWS is postponed. No `hf-model/` or separate runtime engine is introduced. RevelaAI remains untouched.
