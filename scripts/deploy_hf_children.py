@@ -213,6 +213,7 @@ def main() -> int:
         "VORAX_CHILD_ID": CHILD_ID,
         "VORAX_KAGGLE_CHILD_API_KEY": env["VORAX_KAGGLE_CHILD_API_KEY"],
         "VORAX_TEACHER_ATTESTATION_KEY": env["VORAX_TEACHER_ATTESTATION_KEY"],
+        "VORAX_ALLOW_BILLABLE_INFERENCE": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "false").strip().lower(),
     }
     runtime_secrets = {
         "VORAX_CHILD_ID": CHILD_ID,
@@ -228,6 +229,7 @@ def main() -> int:
         "VORAX_TEACHER_ATTESTATION_KEY": env["VORAX_TEACHER_ATTESTATION_KEY"],
         "VORAX_TEACHER_URL": teacher_url,
         "VORAX_TEACHER_MODEL": args.teacher_model.strip(),
+        "VORAX_ALLOW_BILLABLE_INFERENCE": os.getenv("VORAX_ALLOW_BILLABLE_INFERENCE", "false").strip().lower(),
     }
     set_secrets(api, TEACHER_REPO, teacher_secrets)
     set_secrets(api, RUNTIME_REPO, runtime_secrets)
