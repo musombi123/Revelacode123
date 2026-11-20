@@ -89,3 +89,36 @@ The new branch is `fix/vorax-pr5-blockers`, head `43a9a8952eda25aed1b100a585d1c3
 | `44713029013` | pull_request_target | `verify-and-merge-data` (`136209269277`) | 0 | 0 | failure |
 
 These runs provide no test logs and do not establish application-level failure. The draft PR is deliberately not mergeable/ready while this allocation issue persists.
+
+
+## Phase 1 account selection — confirmed account names, not yet authenticated
+
+The owner supplied these account URLs for the first rollout:
+- Kaggle: `https://www.kaggle.com/musombiwilliam` — exact username bound in the Phase 1 publish/controller workflows is `musombiwilliam`.
+- Hugging Face: `https://huggingface.co/Musombi` — exact case-sensitive owner is `Musombi`.
+
+Kaggle profile rendering was not readable through the public web fetch in this audit. The account URL confirms the username supplied by the owner, but no authenticated Kaggle API token is connected here. Existing kernels, GPU quota remaining, notebook secrets and current session status therefore remain unverified. Official Kaggle documentation describes a free NVIDIA P100 baseline and a weekly GPU quota around 30 hours, sometimes higher depending on demand/resources:
+- `https://www.kaggle.com/docs/efficient-gpu-usage`
+- `https://www.kaggle.com/docs/api`
+
+The public Hugging Face profile lists two Spaces, one model and one Dataset:
+- `Musombi/mvi-ai-engine` — existing Space; its public page reports Running and identifies a FastAPI backend. Do not overwrite it.
+- `Musombi/OmniMind` — existing Docker Space showing the starter page and “No application file”. Do not repurpose it without approval.
+- `Musombi/Omnset` — existing public Dataset; its public page currently says it is empty. Do not use it as the VORAX Vault.
+
+The selected VORAX resources remain distinct:
+- Private Dataset Vault: `Musombi/revelacode-vorax-vault`
+- Optional Docker backup Space: `Musombi/revelacode-vorax-child`
+
+Those exact VORAX resources were not visible in the public profile listing. They may be private or not yet created; an authenticated Hugging Face token is needed to distinguish those states. On first successful Kaggle Vault sync, the runtime creates the dedicated Dataset as private if absent. The Vault client now verifies the repository is private and fails closed before uploading Home methods or artifacts if the existing target is public.
+
+Current Hugging Face official rules state:
+- A free personal account may use up to two Gradio ZeroGPU Spaces if it meets eligibility requirements.
+- Creating or duplicating a Docker or CPU-basic Gradio compute Space for a personal account requires PRO.
+- Free accounts have 100 GB of private storage across Hub repositories, not per Dataset.
+
+References:
+- `https://huggingface.co/docs/hub/spaces-overview`
+- `https://huggingface.co/docs/hub/main/en/storage-limits`
+
+The account's subscription tier and remaining storage are not publicly visible in the profile, so this audit does not assume PRO or additional private-storage headroom. Phase 1 therefore prioritizes Kaggle compute plus the HF private Dataset Vault. The separate Docker backup Space and Koyeb service are parked for later; no existing HF resources are overwritten.
