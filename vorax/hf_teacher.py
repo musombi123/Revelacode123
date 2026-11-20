@@ -178,6 +178,58 @@ def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None)
     return rows, _next_cursor(headers)
 
 
+def _discover_router_models(query: str, limit: int) -> list[dict]:
+    """Read the HF OpenAI-compatible model/provider catalogue; no inference is performed."""
+    token = os.getenv("HF_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(503, "HF_TOKEN is required for the Inference Providers model catalogue")
+    payload, _ = _http_json(HF_ROUTER_MODELS_API, token=token, timeout=25)
+    items = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(502, "Hugging Face router model catalogue returned an unexpected response")
+    result = []
+    needle = query.strip().casefold()
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        model_id = item["id"]
+        if needle and needle not in model_id.casefold():
+            continue
+        provider_rows = []
+        for entry in item.get("providers", []) if isinstance(item.get("providers"), list) else []:
+            if not isinstance(entry, dict):
+                continue
+            provider_rows.append({
+                "provider": str(entry.get("provider") or ""),
+                "status": str(entry.get("status") or ""),
+                "provider_model_id": model_id,
+                "task": "conversational",
+                "context_length": entry.get("context_length"),
+                "pricing": entry.get("pricing"),
+                "first_token_latency_ms": entry.get("first_token_latency_ms"),
+                "throughput": entry.get("throughput"),
+                "supports_tools": entry.get("supports_tools"),
+                "supports_structured_output": entry.get("supports_structured_output"),
+                "is_free": entry.get("is_free"),
+            })
+        result.append({
+            "id": model_id,
+            "source_type": "router_chat_model",
+            "owned_by": str(item.get("owned_by") or ""),
+            "tags": ["conversational", "remote-inference"],
+            "description": "Listed by the Hugging Face Inference Providers router",
+            "downloads": 0,
+            "likes": 0,
+            "pipeline_tag": "conversational",
+            "library_name": None,
+            "sdk": None,
+            "providers": provider_rows,
+        })
+        if len(result) >= limit:
+            break
+    return result
+
+
 @app.get("/teacher/discover")
 def discover(
     query: str = Query(default="", max_length=160),
@@ -202,15 +254,27 @@ def discover(
     except Exception as exc:
         raise HTTPException(502, "Hugging Face metadata discovery failed: " + type(exc).__name__) from exc
 
-    models = found.get("models", [])
+    models = list(found.get("models", []))
     resources = [item for kind in kinds for item in found.get(kind, [])]
+    router_models = _discover_router_models(query, limit) if "models" in kinds else []
+    by_id = {item["id"]: item for item in models if isinstance(item, dict) and item.get("id")}
+    for model in router_models:
+        existing = by_id.get(model["id"])
+        if existing is None:
+            models.append(model)
+            by_id[model["id"]] = model
+        else:
+            existing["providers"] = model["providers"]
+    resources.extend(router_models)
     return {
         "status": "metadata_only",
         "query": query,
-        "sources_searched": list(kinds),
+        "sources_searched": [*kinds, "inference_provider_router"],
         "models": models,
+        "router_models": router_models,
         "resources": resources,
         "models_found": len(models),
+        "router_models_found": len(router_models),
         "resources_found": len(resources),
         "next_cursor": cursors.get(source) if source != "all" else cursors.get("models"),
         "next_cursors": cursors,
