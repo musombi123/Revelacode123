@@ -12,8 +12,18 @@ from vorax.vlang import dump_record
 class TeacherServiceTests(unittest.TestCase):
     def test_discovery_returns_metadata_only(self):
         metadata = [
-            {"id": "acme/example", "tags": ["text-generation"], "downloads": 123, "likes": 7,
-             "modelId": "ignored", "sha": "ignored"},
+            {
+                "id": "acme/example",
+                "tags": ["text-generation"],
+                "downloads": 123,
+                "likes": 7,
+                "pipeline_tag": "text-generation",
+                "inferenceProviderMapping": {
+                    "provider-a": {"status": "live", "providerId": "acme/example-a", "task": "conversational"},
+                },
+                "modelId": "ignored",
+                "sha": "ignored",
+            },
         ]
         with patch.object(hf_teacher, "_http_json", return_value=(metadata, {})) as call:
             result = hf_teacher.discover(query="example", limit=3, source="models")
@@ -21,7 +31,11 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertEqual(result["models"], [{
             "id": "acme/example", "source_type": "model", "tags": ["text-generation"],
             "description": "", "downloads": 123, "likes": 7,
-            "pipeline_tag": None, "library_name": None, "sdk": None,
+            "pipeline_tag": "text-generation", "library_name": None, "sdk": None,
+            "providers": [{
+                "provider": "provider-a", "status": "live",
+                "provider_model_id": "acme/example-a", "task": "conversational",
+            }],
         }])
         self.assertIs(result["weights_downloaded"], False)
         self.assertNotIn("files", result["models"][0])
