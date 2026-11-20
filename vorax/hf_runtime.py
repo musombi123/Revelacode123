@@ -188,6 +188,18 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
         "child_id": child_id,
         "teacher": (teacher_id or "hf-teacher-service")[:64],
     }
+    home_index, index_status = _refresh_home_index(force=True)
+    if home_index is None:
+        raise HTTPException(503, "Home metadata-only index is unavailable; refusing duplicate-blind submission")
+    duplicate = find_duplicate(home_index, record)
+    if duplicate:
+        raise HTTPException(409, {
+            "status": "unknown",
+            "reason": duplicate,
+            "home_index_methods": home_index["methods_total"],
+            "method_body_from_home_loaded": False,
+        })
+
     try:
         validate_template(record, run_tests=True)
         canonical = dump_record(record).encode("utf-8")
@@ -276,20 +288,20 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
     }
 
 
-@app.on_event("startup")
-def startup():
-    _seed_store()
-    _refresh_home(force=True)
-
-
 @app.get("/health")
 def health():
+    home_index, index_status = _refresh_home_index()
     vault = {"status": "not_configured", "repo": VAULT_REPO, "repo_type": "dataset"}
     if os.getenv("HF_VAULT_TOKEN", "").strip():
         try:
             vault = inspect_vault()
         except Exception as exc:
-            vault = {"status": "unavailable", "repo": VAULT_REPO, "repo_type": "dataset", "reason": type(exc).__name__}
+            vault = {
+                "status": "unavailable",
+                "repo": VAULT_REPO,
+                "repo_type": "dataset",
+                "reason": type(exc).__name__,
+            }
     required = {
         "child_key": bool(CHILD_KEY),
         "home_read_token": bool(HOME_READ_TOKEN),
@@ -303,13 +315,34 @@ def health():
         "vlang": "vlang/1",
         "shared_runtime": True,
         "home_repository": HOME_REPO,
-        "home_sync": dict(_HOME_SYNC),
+        "home_index": index_status,
+        "home_method_bodies_loaded": False,
         "vault": vault,
         "required_secrets": required,
-        "ready": all(required.values()) and vault.get("status") == "verified",
+        "ready": all(required.values()) and home_index is not None and vault.get("status") == "verified",
         "weights_downloaded": False,
         "local_model_loaded": False,
     }
+
+
+@app.get("/vorax/home-index")
+def get_home_index(
+    x_child_id: str | None = Header(default=None, alias="x-child-id"),
+    x_child_key: str | None = Header(default=None, alias="x-child-key"),
+):
+    child_id = _require_child(x_child_id, x_child_key)
+    index, _ = _refresh_home_index(force=True)
+    if index is None:
+        raise HTTPException(503, "Home metadata-only index is unavailable")
+    _log(
+        "home_metadata_index_read",
+        child_id=child_id,
+        x="Home metadata index",
+        method=None,
+        verification="metadata_only",
+        index_methods=index["methods_total"],
+    )
+    return {**index, "method_bodies_included": False}
 
 
 @app.post("/vorax/x")
@@ -318,42 +351,58 @@ def input_x(
     x_child_id: str | None = Header(default=None, alias="x-child-id"),
     x_child_key: str | None = Header(default=None, alias="x-child-key"),
 ):
-    # Header authentication is preferred; body fields support the documented JSON client shape.
     child_id = _require_child(body.get("child_id") or x_child_id, body.get("api_key") or x_child_key)
     value = body.get("x")
     if not isinstance(value, str) or not value.strip() or len(value) > 12_000:
         raise HTTPException(422, "x must be non-empty text of at most 12000 characters")
-    home_sync = _refresh_home()
-    result = handle_input_x(value, STORE.all(), tool_executor=execute_tool_dict)
-    status = result.get("status", "unknown")
-    if status not in {"verified", "unknown", "blocked"}:
-        status = "unknown"
-    method_id = result.get("template_id")
-    answer = result.get("answer")
-    artifact_sha = _artifact_sha256(result) if status == "verified" else None
-    verification = {
-        "status": "runtime_method_passed" if status == "verified" else status,
+
+    home_index, index_status = _refresh_home_index()
+    result = handle_builtin_input(value)
+    method_id = result.get("method")
+    verification = result.get("verification") or {
         "authority": "shared_vorax_runtime",
-        "home_sync": home_sync.get("status"),
         "child_self_certification": False,
     }
+
+    home_match = None
+    if home_index is not None:
+        normalized = re.sub(r"[^a-z0-9 ]+", " ", value.casefold())
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        home_match = next(
+            (
+                item for item in home_index["records"]
+                if item["task"].casefold() == normalized
+                or any(trigger.casefold() == normalized for trigger in item["triggers"])
+            ),
+            None,
+        )
+
+    response = {
+        "status": result["status"],
+        "engine": "VORAX",
+        "method": method_id,
+        "answer": result.get("answer"),
+        "artifact_sha256": None,
+        "verification": {
+            **verification,
+            "home_method_body_loaded": False,
+            "home_index_status": index_status["status"],
+            "home_known_method_id": home_match["id"] if home_match else None,
+        },
+        "home_index": index_status,
+    }
+    if result["status"] == "unknown" and home_match:
+        response["reason"] = "method_metadata_exists_in_home; method body was not sent to Child"
+    else:
+        response["reason"] = result.get("reason")
     _log(
         "input_x",
         child_id=child_id,
         x=_redact_x(value),
-        method=method_id,
-        verification=verification["status"],
-        artifact_sha256=artifact_sha,
+        method=method_id or (home_match["id"] if home_match else None),
+        verification=result["status"],
     )
-    return {
-        "status": status,
-        "engine": "VORAX",
-        "method": method_id,
-        "answer": answer,
-        "artifact_sha256": artifact_sha,
-        "verification": verification,
-        "home_sync": home_sync,
-    }
+    return response
 
 
 @app.post("/vorax/verify")
