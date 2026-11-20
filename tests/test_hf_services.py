@@ -191,5 +191,125 @@ class VaultProtectionTests(unittest.TestCase):
         self.assertEqual(checksums["vlang/pending/learned.pending_test.vlang"], canonical_sha)
 
 
+    def test_pending_method_promotes_only_when_home_index_summary_matches(self):
+        import hashlib
+        record = {
+            "version": "vlang/1",
+            "id": "learned.home_approved",
+            "domain": "text",
+            "task": "return supplied text unchanged",
+            "triggers": ["return text unchanged", "identity text procedure"],
+            "inputs": {"value": "string"},
+            "steps": [{"op": "identity", "args": [{"input": "value"}], "as": "answer"}],
+            "result": {"step": "answer"},
+            "tests": [
+                {"input": {"value": "one"}, "expect": "one"},
+                {"input": {"value": "two"}, "expect": "two"},
+            ],
+            "provenance": {"kind": "teacher", "teacher": "remote-teacher", "child_id": "kaggle-child"},
+        }
+        raw = dump_record(record).encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
+        pending = {
+            "version": "vlang-index/1",
+            "records": [{
+                "id": record["id"],
+                "path": f"vlang/pending/{record['id']}.vlang",
+                "sha256": digest,
+                "verification_report": "reports/verification/pending/learned.home_approved.json",
+                "status": "submitted_for_home_review",
+                "home_pr": "https://github.com/musombi123/Revelacode123/pull/42",
+            }],
+        }
+        verified = {"version": "vlang-index/1", "records": []}
+        checksums = {"version": "sha256/v1", "files": {}}
+        files = []
+        fake_api = SimpleNamespace(
+            repo_info=lambda **kwargs: SimpleNamespace(private=True),
+            list_repo_files=lambda **kwargs: [
+                "vlang/pending/learned.home_approved.vlang",
+                "vlang/pending/index.json",
+                "vlang/index.json",
+                "manifest/checksums.json",
+            ],
+        )
+        def read_json(_api, _repo, path, default):
+            if path == "vlang/pending/index.json":
+                return pending
+            if path == "vlang/index.json":
+                return verified
+            if path == "manifest/checksums.json":
+                return checksums
+            return default
+        home_index = {
+            "version": "vorax-home-method-index/v1",
+            "methods_total": 1,
+            "records": [{
+                "id": record["id"],
+                "domain": record["domain"],
+                "task": record["task"],
+                "triggers": record["triggers"],
+            }],
+        }
+        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "dataset-token"}), \
+             patch("huggingface_hub.HfApi", return_value=fake_api), \
+             patch.object(vault, "_read_json", side_effect=read_json), \
+             patch.object(vault, "_read_file", return_value=raw), \
+             patch.object(vault, "_upload", side_effect=lambda _api, _repo, path, data, _message: files.append((path, data))):
+            result = vault.promote_pending_home_methods(home_index)
+        self.assertEqual(result["status"], "promoted")
+        self.assertEqual(result["promoted_method_ids"], [record["id"]])
+        self.assertTrue(any(path == f"vlang/verified/{record['id']}.vlang" for path, _ in files))
+
+    def test_pending_method_is_not_promoted_when_home_metadata_does_not_match(self):
+        import hashlib
+        record = {
+            "version": "vlang/1",
+            "id": "learned.home_mismatch",
+            "domain": "text",
+            "task": "return supplied text unchanged",
+            "triggers": ["return text unchanged", "identity text procedure"],
+            "inputs": {"value": "string"},
+            "steps": [{"op": "identity", "args": [{"input": "value"}], "as": "answer"}],
+            "result": {"step": "answer"},
+            "tests": [
+                {"input": {"value": "one"}, "expect": "one"},
+                {"input": {"value": "two"}, "expect": "two"},
+            ],
+            "provenance": {"kind": "teacher", "teacher": "remote-teacher", "child_id": "kaggle-child"},
+        }
+        raw = dump_record(record).encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
+        fake_api = SimpleNamespace(
+            repo_info=lambda **kwargs: SimpleNamespace(private=True),
+            list_repo_files=lambda **kwargs: ["vlang/pending/index.json"],
+        )
+        pending = {"version": "vlang-index/1", "records": [{
+            "id": record["id"],
+            "path": f"vlang/pending/{record['id']}.vlang",
+            "sha256": digest,
+        }]}
+        def read_json(_api, _repo, path, default):
+            if path == "vlang/pending/index.json":
+                return pending
+            return {"version": "vlang-index/1", "records": []} if path == "vlang/index.json" else {"version": "sha256/v1", "files": {}}
+        wrong_home = {
+            "version": "vorax-home-method-index/v1",
+            "methods_total": 1,
+            "records": [{
+                "id": record["id"], "domain": record["domain"],
+                "task": "a different Home task", "triggers": record["triggers"],
+            }],
+        }
+        with patch.dict(os.environ, {"HF_VAULT_TOKEN": "dataset-token"}), \
+             patch("huggingface_hub.HfApi", return_value=fake_api), \
+             patch.object(vault, "_read_json", side_effect=read_json), \
+             patch.object(vault, "_read_file", return_value=raw), \
+             patch.object(vault, "_upload") as upload:
+            with self.assertRaisesRegex(vault.VaultError, "does not match Home"):
+                vault.promote_pending_home_methods(wrong_home)
+        upload.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
