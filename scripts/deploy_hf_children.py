@@ -59,6 +59,11 @@ def assert_weight_free(path: Path) -> None:
             text = item.read_text(encoding="utf-8", errors="replace").lower()
             if "diffusers" in text or "transformers" in text:
                 raise RuntimeError(f"Local model-generation dependency found in Space package: {rel}")
+        if item.is_file() and item.suffix.lower() == ".py":
+            source = item.read_text(encoding="utf-8", errors="replace").lower()
+            forbidden = ("diffusers", "snapshot_download", "transformers.pipeline", ".from_pretrained(")
+            if any(token in source for token in forbidden):
+                raise RuntimeError(f"Local model loading code found in Space package: {rel}")
 
 
 def inspect_existing_vault(token: str) -> dict:
