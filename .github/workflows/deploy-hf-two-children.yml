@@ -41,6 +41,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
           HF_VAULT_TOKEN: ${{ secrets.HF_VAULT_TOKEN }}
+          VORAX_TEACHER_ATTESTATION_KEY: ${{ secrets.VORAX_TEACHER_ATTESTATION_KEY }}
           VORAX_KAGGLE_CHILD_API_KEY: ${{ secrets.VORAX_KAGGLE_CHILD_API_KEY }}
           VORAX_HOME_READ_TOKEN: ${{ secrets.VORAX_HOME_READ_TOKEN }}
           VORAX_HOME_WRITE_TOKEN: ${{ secrets.VORAX_HOME_WRITE_TOKEN }}
