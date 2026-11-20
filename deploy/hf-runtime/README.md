@@ -6,7 +6,7 @@ app_port: 7860
 
 # VORAX Runtime Service
 
-This is a **public Docker Space service**, not a model repository. Runtime routes that accept Child work require VORAX Child authentication; the existing Vault remains a private Dataset. It runs the repository's shared `vorax/` package and V-Lang interpreter.
+This is a **public Docker Space service**, not a model repository. Runtime routes that accept Child work require VORAX Child authentication; the existing Vault remains a private Dataset. It runs the repository's shared `vorax/` package and V-Lang interpreter. It does not bundle Home's `templates/library/` method bodies; it reads only `templates/library/index.json` summaries for duplicate detection.
 
 It exposes:
 - `GET /health`
@@ -21,9 +21,12 @@ Authentication uses the Kaggle Child identity/key plus server-side GitHub Home a
 - The Runtime executes the repository's trusted V-Lang interpreter and reruns every declared test.
 - A Child's claimed verification is never trusted.
 - A passing candidate is stored only under `vlang/pending/` in the existing private Dataset Vault.
-- A Home PR is opened after the pending Vault write. Only a later Home sync can make a Home-merged method executable.
+- A Home PR includes the proposed V-Lang method and a metadata-only index update. Only Home validates/merges it.
+- After merge, Runtime may promote the candidate already in Vault pending to `vlang/verified/` when Home's index includes its ID. Runtime never downloads the method body from Home.
 - The Runtime does not merge PRs and does not certify GO.
 - Artifact SHA-256 is returned only when an actual verified artifact result includes a digest. No placeholder digest is created.
+
+The authenticated `GET /vorax/home-index` route exposes only method IDs, domains, task summaries and triggers. It never returns executable V-Lang method bodies.
 
 ## Weight and media policy
 
