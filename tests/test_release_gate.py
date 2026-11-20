@@ -37,6 +37,15 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "exact tagged commit"):
             latest_verify_check(runs, "a" * 40)
 
+    def test_ignores_checks_with_missing_suite_sha(self):
+        runs = [{
+            "id": 2, "name": "verify", "status": "completed", "conclusion": "success",
+            "started_at": "2026-11-20T09:00:00Z",
+            "check_suite": {},
+        }]
+        with self.assertRaisesRegex(RuntimeError, "exact tagged commit"):
+            latest_verify_check(runs, "a" * 40)
+
     def test_requires_success_for_exact_sha(self):
         runs = [{
             "id": 3, "name": "verify", "status": "completed", "conclusion": "success",
