@@ -37,6 +37,7 @@ REQUIRED_ENV = (
     "VORAX_HOME_READ_TOKEN",
     "VORAX_HOME_WRITE_TOKEN",
     "HF_VAULT_TOKEN",
+    "VORAX_TEACHER_ATTESTATION_KEY",
 )
 
 
@@ -210,6 +211,7 @@ def main() -> int:
         "HF_READ_TOKEN": os.getenv("HF_READ_TOKEN", "").strip(),
         "VORAX_CHILD_ID": CHILD_ID,
         "VORAX_KAGGLE_CHILD_API_KEY": env["VORAX_KAGGLE_CHILD_API_KEY"],
+        "VORAX_TEACHER_ATTESTATION_KEY": env["VORAX_TEACHER_ATTESTATION_KEY"],
     }
     runtime_secrets = {
         "VORAX_CHILD_ID": CHILD_ID,
@@ -221,6 +223,7 @@ def main() -> int:
         "VORAX_HOME_WRITE_TOKEN": env["VORAX_HOME_WRITE_TOKEN"],
         "HF_VAULT_TOKEN": env["HF_VAULT_TOKEN"],
         "HF_VAULT_REPO": VAULT_REPO,
+        "VORAX_TEACHER_ATTESTATION_KEY": env["VORAX_TEACHER_ATTESTATION_KEY"],
         "VORAX_TEACHER_URL": teacher_url,
         "VORAX_TEACHER_MODEL": args.teacher_model.strip(),
     }
