@@ -64,7 +64,7 @@ class ToolLayerTests(unittest.TestCase):
         import struct
         def chunk(kind, payload):
             return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff)
-        raw = (b"\\x89PNG\\r\\n\\x1a\\n" +
+        raw = (b"\x89PNG\r\n\x1a\n" +
                chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0)) +
                chunk(b"IDAT", zlib.compress(b"".join(
                    bytes([0]) + bytes(((x + y) % 256 for x in range(64 * 3)))
