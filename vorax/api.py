@@ -73,6 +73,16 @@ def save_candidate(candidate: dict,who: str):
     if who!="admin": STORE.record_success(who)
     return record
 
+
+def runtime_tool_executor(name: str, inputs: dict):
+    """Bind media execution to the Child's actual role; Kaggle never falls back to remote inference."""
+    role=os.getenv("VORAX_CHILD_ROLE","").strip().lower()
+    media_tools={"image.generate","audio.tts","audio.transcribe","video.generate","music.generate"}
+    if role=="kaggle" and name in media_tools:
+        return execute_registered_tool(name,inputs,provider="kaggle-gpu")
+    return execute_registered_tool(name,inputs)
+
+
 def gpu_telemetry():
     try:
         p=subprocess.run(["nvidia-smi","--query-gpu=name,memory.total,memory.used,utilization.gpu","--format=csv,noheader,nounits"],capture_output=True,text=True,timeout=3,check=True)
@@ -83,7 +93,7 @@ def gpu_telemetry():
 @app.get("/health")
 @app.get("/v1/health")
 def health():
-    return {"status":"ok","engine":"VORAX","templates":len(STORE.all()),"teacher_configured":teacher_configured(),
+    return {"status":"ok","engine":"VORAX","child_role":os.getenv("VORAX_CHILD_ROLE","shared").strip().lower(),"templates":len(STORE.all()),"teacher_configured":teacher_configured(),
       "home_repository":HOME_REPO,"vault_configured":bool(os.getenv("HF_VAULT_TOKEN")),
       "vault_repository":os.getenv("HF_VAULT_REPO","Musombi/revelacode-vorax-vault"),
       "local_gpu":gpu_telemetry(),"model_required_for_composition":False}
@@ -383,6 +393,14 @@ def tool_execute(body: dict, request: Request):
     if not isinstance(inputs,dict) or len(__import__("json").dumps(inputs,ensure_ascii=False).encode("utf-8")) > 45*1024*1024:
         raise HTTPException(413,"Tool input must be an object under 45MB")
     # No request URL, arbitrary model ID, code string execution, or caller credentials.
+    role=os.getenv("VORAX_CHILD_ROLE","").strip().lower()
+    media_tools={"image.generate","audio.tts","audio.transcribe","video.generate","music.generate"}
+    if role=="koyeb" and name in media_tools:
+        raise HTTPException(409,"Koyeb does not execute media tools directly; submit Input X for Kaggle routing")
+    if role=="kaggle" and name in media_tools:
+        provider="kaggle-gpu"
+    elif provider=="kaggle-gpu":
+        raise HTTPException(403,"Kaggle GPU provider is only available inside the Kaggle Child runtime")
     result=execute_registered_tool(name,inputs,provider=provider)
     if result.get("status") != "verified":
         return result
@@ -446,7 +464,7 @@ def vorax_input_x(body: dict, request: Request):
     # Any paid/external tool call must come through an authenticated child or admin.
     if classification.get("tool"):
         actor(request)
-    result=handle_input_x(value,STORE.all(),tool_executor=execute_registered_tool)
+    result=handle_input_x(value,STORE.all(),tool_executor=runtime_tool_executor)
     result["engine"]="VORAX"
     result["home_sync"]=home_status
 

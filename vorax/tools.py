@@ -6,6 +6,7 @@ are returned as successful results.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -63,6 +64,9 @@ class ToolResult:
     verification: dict[str, Any] | None = None
     elapsed_ms: int = 0
     reason: str | None = None
+    sha256: str | None = None
+    model_id: str | None = None
+    gpu_telemetry: dict[str, Any] | None = None
 
 CONTRACTS = {
     "image.generate": ToolContract("image.generate", {"prompt":"string","width":"integer","height":"integer"}, {"artifact":"image/png","width":"integer","height":"integer"}, 60, "1 provider inference call", "huggingface", "png"),
@@ -171,7 +175,20 @@ def _verify_png(path: Path) -> dict[str, Any]:
     if bit_depth not in {8,16} or channels is None: raise ToolError("PNG color format is unsupported by the verifier")
     expected=height*(1+width*channels*(bit_depth//8))
     if len(decoded)!=expected: raise ToolError("PNG decoded pixel buffer has an invalid length")
-    return {"valid": True, "format":"png", "width":width, "height":height, "decoded_pixel_bytes":len(decoded)}
+    try:
+        from PIL import Image, ImageStat
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            image.load()
+            extrema=ImageStat.Stat(image.convert("RGB")).extrema
+            if all(low==high for low,high in extrema):
+                raise ToolError("PNG contains a single-colour blank image")
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError("PNG could not be independently decoded by Pillow") from exc
+    return {"valid": True, "format":"png", "width":width, "height":height, "decoded_pixel_bytes":len(decoded), "non_blank":True}
 
 def _verify_wav(path: Path) -> tuple[dict[str, Any], float]:
     try:
@@ -266,8 +283,45 @@ def execute_tool(name: str, inputs: dict[str, Any], *, provider: str | None = No
     contract=CONTRACTS[name]
     started=time.monotonic()
     if name == "code.execute":
+        if provider not in (None, "huggingface"):
+            raise ToolError("The bounded code interpreter does not use a media provider")
         result=_run_code(inputs.get("source"), inputs.get("tests", []))
         result.elapsed_ms=int((time.monotonic()-started)*1000)
+        result.sha256=hashlib.sha256((ARTIFACT_ROOT/result.artifact).read_bytes()).hexdigest() if result.artifact else None
+        return result
+    if provider == "kaggle-gpu":
+        if name != "image.generate":
+            raise ToolError(f"No local Kaggle GPU adapter is implemented for {name}; remote inference fallback is disabled")
+        prompt=_string(inputs.get("prompt"),"prompt")
+        width,height=_dimensions(inputs.get("width",512),inputs.get("height",512))
+        try:
+            from .providers.kaggle_gpu import generate_image
+            generated=generate_image(prompt,width,height)
+        except Exception as exc:
+            raise ToolError("Kaggle local GPU image adapter failed: "+type(exc).__name__+": "+str(exc)[:220]) from exc
+        data=generated.get("data")
+        if not isinstance(data,bytes) or not data:
+            raise ToolError("Kaggle GPU adapter returned no PNG bytes")
+        telemetry=generated.get("gpu_telemetry")
+        if not isinstance(telemetry,dict) or telemetry.get("gpu_used") is not True:
+            raise ToolError("Kaggle adapter did not prove CUDA execution; artifact rejected")
+        path=_save(data,".png")
+        try:
+            verification=_verify_png(path)
+            if verification["width"] != width or verification["height"] != height:
+                raise ToolError("Generated PNG dimensions differ from the request")
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        result=ToolResult(
+            "verified",name,"kaggle-local-diffusers",path.name,"image/png",
+            path.stat().st_size,verification=verification,
+            elapsed_ms=int(generated.get("elapsed_ms") or (time.monotonic()-started)*1000),
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            model_id=generated.get("model_id"),gpu_telemetry=telemetry,
+            output={"seed":generated.get("seed"),"steps":generated.get("steps"),
+                    "width":generated.get("width"),"height":generated.get("height")},
+        )
         return result
     if provider not in (None, "huggingface"):
         raise ToolError("Requested provider is not registered for this adapter")
@@ -317,6 +371,19 @@ def execute_tool(name: str, inputs: dict[str, Any], *, provider: str | None = No
     else:
         raise ToolError("No executable adapter is registered")
     result.elapsed_ms=int((time.monotonic()-started)*1000)
+    result.model_id=_model_for(name) if name in MODEL_ENV else None
+    if result.artifact:
+        artifact_path=(ARTIFACT_ROOT/result.artifact).resolve()
+        if ARTIFACT_ROOT not in artifact_path.parents or not artifact_path.is_file():
+            raise ToolError("Generated artifact path is missing or outside the artifact root")
+        result.sha256=hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    if result.provider=="huggingface":
+        result.gpu_telemetry={
+            "gpu_used":None,
+            "gpu_name":None,
+            "telemetry_source":"remote_provider_not_exposed",
+            "observation":"Hugging Face Inference did not expose the provider GPU device to this caller",
+        }
     return result
 
 def execute_tool_dict(name: str, inputs: dict[str, Any], *, provider: str | None = None) -> dict[str, Any]:
