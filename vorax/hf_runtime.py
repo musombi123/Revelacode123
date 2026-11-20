@@ -164,8 +164,8 @@ def _teacher_ask(prompt: str, model_id: str, child_id: str) -> dict:
 def _parse_candidate(text: str) -> dict:
     content = text.strip()
     if content.startswith("```"):
-        content = re.sub(r"^\`\`\`(?:json)?\s*", "", content, flags=re.I)
-        content = re.sub(r"\s*\`\`\`$", "", content)
+        content = re.sub(r"^```(?:json)?\\s*", "", content, flags=re.I)
+        content = re.sub(r"\\s*```$", "", content)
     try:
         value = json.loads(content)
     except json.JSONDecodeError as exc:
@@ -175,7 +175,6 @@ def _parse_candidate(text: str) -> dict:
     if not isinstance(value, dict):
         raise HTTPException(422, "Teacher response did not contain a V-Lang method object")
     return value
-
 
 def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value: str) -> dict:
     if not isinstance(candidate, dict):
@@ -191,7 +190,8 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
         validate_template(record, run_tests=True)
         canonical = dump_record(record).encode("utf-8")
         method_sha = hashlib.sha256(canonical).hexdigest()
-        STORE.add(record)
+        # Pending candidates are deliberately not added to the executable catalog.
+        # Only a later Home sync may make a merged method available to /vorax/x.
     except (TemplateError, ValueError) as exc:
         STORE.record_failure(child_id)
         _log(
@@ -316,7 +316,8 @@ def input_x(
     x_child_id: str | None = Header(default=None, alias="x-child-id"),
     x_child_key: str | None = Header(default=None, alias="x-child-key"),
 ):
-    child_id = _require_child(x_child_id, x_child_key)
+    # Header authentication is preferred; body fields support the documented JSON client shape.
+    child_id = _require_child(body.get("child_id") or x_child_id, body.get("api_key") or x_child_key)
     value = body.get("x")
     if not isinstance(value, str) or not value.strip() or len(value) > 12_000:
         raise HTTPException(422, "x must be non-empty text of at most 12000 characters")
@@ -359,7 +360,7 @@ def verify_method(
     x_child_id: str | None = Header(default=None, alias="x-child-id"),
     x_child_key: str | None = Header(default=None, alias="x-child-key"),
 ):
-    child_id = _require_child(x_child_id, x_child_key)
+    child_id = _require_child(body.get("child_id") or x_child_id, body.get("api_key") or x_child_key)
     method = body.get("method")
     if not isinstance(method, dict):
         raise HTTPException(422, "method must be a V-Lang object")
