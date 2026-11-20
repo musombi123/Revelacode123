@@ -16,7 +16,7 @@ VORAX is a learning engine, not a model. It has one Input X, one V-Lang, and one
 
 The two Spaces are public HTTP services protected by the VORAX Child key on all learning, inference, execution and verification routes. Health and model metadata discovery are read-only. This avoids making Kaggle authenticate to a private Space separately. The Vault remains private.
 
-Kaggle is a separate Learning Connector, not a GPU media worker. Its current connector validation is outside this HF-only change. It may discover Hub metadata, call Teacher remotely, and submit a testable candidate to Runtime. It must not download weights, run Diffusers, generate media locally, write directly to Vault, process a queue during connection tests, or certify itself. Koyeb is paused.
+Kaggle is the on-demand Away Hunter. It discovers model, Space and Dataset metadata, reads only Home's metadata index, asks a bounded panel of remote Teachers (proposal → independent review → synthesis), and submits one testable candidate to Runtime. Its source is changed to this learning-only design; live Kaggle validation remains a separate proof step. It must not download weights, run Diffusers, generate media locally, write directly to Vault, process a queue during connection tests, or certify itself. Koyeb is paused.
 
 RevelaAI remains untouched on Gemini. AWS remains postponed.
 
@@ -34,7 +34,7 @@ Routes:
 | **GET /teacher/discover?query=X&limit=N&source=all** | Metadata for Hub models, Spaces and Datasets: id, tags, description, downloads, likes, pipeline/library/SDK metadata |
 | **POST /teacher/ask** | Authenticated remote chat completion through Hugging Face Inference Providers |
 
-Example request fields: prompt and model_id, for example owner/model:provider. The ask route requires x-child-id and x-child-key. The response and service log include model ID, provider (or unknown if the provider header is absent), remote inference status, and kaggle_t4_used=false. There is no local model runtime or weight cache. The inference call is explicit; deployment health checks do not consume inference quota.
+Example request fields: prompt and model_id, for example owner/model:provider. The ask route requires x-child-id and x-child-key. Kaggle can consult several discovered models in one learning pass. Each response and service log includes model ID, provider (or unknown if the provider header is absent), remote inference status, and kaggle_t4_used=false. There is no local model runtime or weight cache. The inference call is explicit; deployment health checks do not consume inference quota.
 
 Teacher Space secrets:
 - **HF_TOKEN** — Hugging Face token with Inference Providers permission.
@@ -101,7 +101,7 @@ Required existing index/manifest/report files:
 
 Artifact prefixes remain **artifacts/images/**, **artifacts/audio/**, and **artifacts/video/**. Empty directories may not appear in Hub listings until a file is uploaded. No model weights, model configs or model training checkpoints belong in this Dataset.
 
-The Runtime writes a pending method only after trusted V-Lang tests pass. Teacher and Kaggle have no direct Vault write path. Home-merged methods are mirrored to **vlang/verified/**; pending proposals are not promoted by Vault sync. Media enters the Vault only after real format verification and SHA-256 calculation. Until a real PNG/WAV/MP4 is independently verified, its status remains UNKNOWN.
+The Runtime writes a pending method only after trusted V-Lang tests pass. Teacher and Kaggle have no direct Vault write path. When Home's metadata-only index confirms the merged method ID, Runtime rechecks that the method already in Vault pending has the same domain, task and triggers, revalidates its V-Lang tests and SHA-256, then promotes that Vault-stored method to **vlang/verified/**. Runtime never downloads a Home method body. Media enters the Vault only after real format verification and SHA-256 calculation. Until a real PNG/WAV/MP4 is independently verified, its status remains UNKNOWN.
 
 ## 4. Deployment
 
@@ -121,9 +121,7 @@ Local deployment commands:
 
 The script requires **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, and **HF_VAULT_TOKEN** in the local process environment. **HF_READ_TOKEN** and **VORAX_TEACHER_MODEL** are optional. Never paste these values into chat or commit them.
 
-Optional, deliberately explicit smoke actions:
-- **--smoke-remote-inference --teacher-model owner/model:provider** makes one actual remote inference request and may consume provider quota/credits.
-- **--seed-pending-smoke-method** writes a synthetic deployment-test method to Vault pending and opens a Home PR. It is not evidence that Kaggle learned the method.
+Optional, deliberately explicit smoke action: **--smoke-remote-inference --teacher-model owner/model:provider** makes one actual remote inference request and may consume provider quota/credits. Deployment does not fabricate or seed a V-Lang method.
 
 The equivalent release-gated GitHub Actions workflow is **.github/workflows/deploy-hf-two-children.yml**. It runs only from a published tag that passes **scripts/require_green_release.py**. Required GitHub Secrets are **HF_SPACE_TOKEN**, **HF_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, and **HF_VAULT_TOKEN**; optional **HF_READ_TOKEN** and repository variable **VORAX_TEACHER_MODEL** may also be set.
 
