@@ -69,14 +69,18 @@ def find_duplicate(index: dict, candidate: dict) -> str | None:
     """Return the duplicate reason using metadata only."""
     records = index.get("records", [])
     candidate_id = candidate.get("id")
+    candidate_domain = str(candidate.get("domain", "")).casefold()
+    candidate_task = str(candidate.get("task", "")).casefold()
+    candidate_triggers = {str(value).casefold() for value in candidate.get("triggers", [])}
     for item in records:
         if item.get("id") == candidate_id:
             return "method_id_exists_in_home"
-        if (
-            str(item.get("domain", "")).casefold() == str(candidate.get("domain", "")).casefold()
-            and str(item.get("task", "")).casefold() == str(candidate.get("task", "")).casefold()
-        ):
+        item_domain = str(item.get("domain", "")).casefold()
+        if item_domain == candidate_domain and str(item.get("task", "")).casefold() == candidate_task:
             return "method_task_exists_in_home"
+        known_triggers = {str(value).casefold() for value in item.get("triggers", [])}
+        if item_domain == candidate_domain and candidate_triggers.intersection(known_triggers):
+            return "method_trigger_exists_in_home"
     return None
 
 
