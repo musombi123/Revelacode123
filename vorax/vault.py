@@ -395,6 +395,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
 
     home_by_id = {item["id"]: item for item in trusted_index["records"]}
     promoted = []
+    promoted_methods = []
     for entry in pending_records:
         if not isinstance(entry, dict) or entry.get("id") not in home_by_id:
             continue
@@ -451,6 +452,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
         entry["status"] = "merged_home_and_promoted"
         entry["home_certification"] = "confirmed_by_home_index"
         entry["promoted_at"] = promoted_at
+        promoted_methods.append(candidate)
 
         report_path = entry.get("verification_report")
         if report_path:
@@ -485,6 +487,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
     return {
         "status": "promoted" if promoted else "no_home_merged_pending_methods",
         "promoted_method_ids": promoted,
+        "promoted_methods": promoted_methods,
         "home_index_methods": len(home_by_id),
         "repo_type": "dataset",
         "vault_repo": repo,
