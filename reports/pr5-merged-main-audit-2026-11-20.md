@@ -76,3 +76,16 @@ No live-service proof was present in the repository/workflow results examined:
 ## GO / NO-GO
 
 **GO remains BLOCKED.** The merged commit contains architecture, workflows and trust controls; it does not contain live-service or GPU artifact proof. RevelaAI is separate and is not modified by this branch. AWS remains postponed.
+
+
+## PR #7 branch CI evidence (after opening the draft)
+
+The new branch is `fix/vorax-pr5-blockers`, head `43a9a8952eda25aed1b100a585d1c3e7d3f60fbe`, based on main `82b15988...`. Its current push and pull-request check attempts also failed before any step was assigned:
+
+| Run | Event | Job | Runner ID | Steps | Result |
+|---|---|---|---:|---:|---|
+| `44713022985` | push | `verify` (`136209248482`) | 0 | 0 | failure |
+| `44713032211` | pull_request | `verify` (`136209280663`) | 0 | 0 | failure |
+| `44713029013` | pull_request_target | `verify-and-merge-data` (`136209269277`) | 0 | 0 | failure |
+
+These runs provide no test logs and do not establish application-level failure. The draft PR is deliberately not mergeable/ready while this allocation issue persists.
