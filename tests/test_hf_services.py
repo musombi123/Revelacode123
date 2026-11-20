@@ -171,6 +171,7 @@ class RuntimeServiceTests(unittest.TestCase):
             "VORAX_HOME_READ_TOKEN": "read-token",
             "VORAX_HOME_WRITE_TOKEN": "write-token",
             "HF_VAULT_TOKEN": "vault-token",
+            "HF_INFERENCE_TOKEN": "inference-token",
             "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
         }, clear=True), \
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
@@ -186,7 +187,7 @@ class RuntimeServiceTests(unittest.TestCase):
              }):
             result = hf_runtime.health()
         self.assertTrue(result["ready"])
-        self.assertNotIn("inference_provider_token", result["required_secrets"])
+        self.assertTrue(result["required_secrets"]["inference_provider_token"])
 
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token", "HF_INFERENCE_TOKEN": "remote-inference-token", "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}), \
