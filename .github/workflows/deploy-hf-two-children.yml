@@ -46,6 +46,7 @@ jobs:
           VORAX_HOME_READ_TOKEN: ${{ secrets.VORAX_HOME_READ_TOKEN }}
           VORAX_HOME_WRITE_TOKEN: ${{ secrets.VORAX_HOME_WRITE_TOKEN }}
           VORAX_TEACHER_MODEL: ${{ vars.VORAX_TEACHER_MODEL }}
+          VORAX_ALLOW_BILLABLE_INFERENCE: ${{ vars.VORAX_ALLOW_BILLABLE_INFERENCE }}
         shell: bash
         run: |
           args=(--health-wait-seconds 300)
