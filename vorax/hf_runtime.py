@@ -93,6 +93,7 @@ def _require_child(child_id: str | None, child_key: str | None) -> str:
         "VORAX_HOME_READ_TOKEN": HOME_READ_TOKEN,
         "VORAX_HOME_WRITE_TOKEN": HOME_WRITE_TOKEN,
         "HF_VAULT_TOKEN": os.getenv("HF_VAULT_TOKEN", "").strip(),
+        "VORAX_TEACHER_ATTESTATION_KEY": os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip(),
     }
     missing = [name for name, value in required_secrets.items() if not value]
     if missing:
@@ -182,6 +183,69 @@ def _parse_candidate(text: str) -> dict:
     if not isinstance(value, dict):
         raise HTTPException(422, "Teacher response did not contain a V-Lang method object")
     return value
+
+
+def _verify_teacher_attestation(
+    teacher_response: str,
+    attestation: dict,
+    expected_model_id: str,
+) -> dict:
+    """Verify Teacher-signed provider provenance before trusting a Child-supplied method."""
+    if not isinstance(teacher_response, str) or not teacher_response.strip():
+        raise HTTPException(422, "teacher_response is required")
+    if not isinstance(attestation, dict) or attestation.get("algorithm") != "hmac-sha256":
+        raise HTTPException(403, "A signed Teacher attestation is required")
+    payload = attestation.get("payload")
+    signature = attestation.get("signature")
+    required = {
+        "model_id", "provider_used", "remote_inference", "kaggle_t4_used",
+        "weights_downloaded", "response_sha256", "request_id", "issued_at",
+    }
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise HTTPException(403, "Teacher attestation payload has an invalid schema")
+    secret = os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()
+    if len(secret) < 32:
+        raise HTTPException(503, "Runtime Teacher attestation key is not configured")
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    expected = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not isinstance(signature, str) or not hmac.compare_digest(signature, expected):
+        raise HTTPException(403, "Teacher attestation signature is invalid")
+    if payload.get("model_id") != expected_model_id:
+        raise HTTPException(403, "Teacher attestation model ID does not match the requested model")
+    if payload.get("remote_inference") is not True:
+        raise HTTPException(403, "Teacher attestation does not prove remote inference")
+    if payload.get("kaggle_t4_used") is not False or payload.get("weights_downloaded") is not False:
+        raise HTTPException(403, "Teacher attestation violates the weight-free remote-inference policy")
+    if not isinstance(payload.get("provider_used"), str) or not payload["provider_used"]:
+        raise HTTPException(403, "Teacher attestation provider metadata is missing")
+    issued_at = payload.get("issued_at")
+    if not isinstance(issued_at, int) or isinstance(issued_at, bool):
+        raise HTTPException(403, "Teacher attestation timestamp is invalid")
+    now = int(time.time())
+    if issued_at > now + 60 or now - issued_at > 900:
+        raise HTTPException(403, "Teacher attestation has expired")
+    response_sha = hashlib.sha256(teacher_response.encode("utf-8")).hexdigest()
+    if payload.get("response_sha256") != response_sha:
+        raise HTTPException(403, "Teacher attestation does not match the supplied response")
+    return payload
+
+
+def _validate_teacher_candidate(
+    teacher_response: str,
+    attestation: dict,
+    candidate: dict,
+    model_id: str,
+) -> dict:
+    proof = _verify_teacher_attestation(teacher_response, attestation, model_id)
+    extracted = _parse_candidate(teacher_response)
+    if not isinstance(candidate, dict):
+        raise HTTPException(422, "method must be a V-Lang object")
+    expected = json.dumps(extracted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    supplied = json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if expected != supplied:
+        raise HTTPException(403, "Child-submitted method does not match the Teacher-signed response")
+    return proof
+
 
 def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value: str) -> dict:
     if not isinstance(candidate, dict):
@@ -331,6 +395,7 @@ def health():
         "home_read_token": bool(HOME_READ_TOKEN),
         "home_write_token": bool(HOME_WRITE_TOKEN),
         "vault_token": bool(os.getenv("HF_VAULT_TOKEN", "").strip()),
+        "teacher_attestation_key": len(os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()) >= 32,
     }
     return {
         "status": "ok",
@@ -439,7 +504,12 @@ def verify_method(
     method = body.get("method")
     if not isinstance(method, dict):
         raise HTTPException(422, "method must be a V-Lang object")
-    teacher_id = str(body.get("teacher_model_id") or "hf-teacher-service")
+    teacher_id = str(body.get("teacher_model_id") or "").strip()
+    if not teacher_id:
+        raise HTTPException(422, "teacher_model_id is required")
+    teacher_response = body.get("teacher_response")
+    teacher_attestation = body.get("teacher_attestation")
+    _validate_teacher_candidate(teacher_response, teacher_attestation, method, teacher_id)
     x_value = str(body.get("x") or method.get("task") or method.get("id") or "V-Lang verification")
     return _verify_and_submit(method, child_id, teacher_id, x_value)
 
@@ -468,13 +538,15 @@ def learn_method(
         }, ensure_ascii=False)
     )
     teacher = _teacher_ask(prompt, model_id, child_id)
+    teacher_id = teacher.get("model_id", model_id)
     candidate = _parse_candidate(teacher["response"])
-    return _verify_and_submit(
+    _validate_teacher_candidate(
+        teacher["response"],
+        teacher.get("attestation"),
         candidate,
-        child_id,
-        teacher.get("model_id", model_id),
-        body.task,
+        teacher_id,
     )
+    return _verify_and_submit(candidate, child_id, teacher_id, body.task)
 
 @app.post("/vorax/vault/reconcile")
 def reconcile_vault(
