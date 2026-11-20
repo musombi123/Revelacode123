@@ -155,6 +155,7 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
     resources = list(first.get("resources") or [])
     cursors = dict(first.get("next_cursors") or {})
     pages_by_source = {"models": 1, "spaces": 1, "datasets": 1}
+    remaining = {}
 
     for source in ("models", "spaces", "datasets"):
         cursor = cursors.get(source)
@@ -175,8 +176,7 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
             cursors = dict(page.get("next_cursors") or {source: page.get("next_cursor")})
             cursor = cursors.get(source)
             pages_by_source[source] += 1
-
-    remaining = {source: bool(cursor) for source, cursor in cursors.items()}
+        remaining[source] = bool(cursor)
     return {
         "status": "metadata_only",
         "query": query,
