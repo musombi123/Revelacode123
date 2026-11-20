@@ -14,7 +14,7 @@ It exposes:
 - `POST /vorax/verify` — trusted V-Lang validation and Runtime-only pending Vault write
 - `POST /vorax/learn` — ask the separate Teacher Service, then validate the returned method
 
-Authentication uses the Kaggle Child identity/key plus server-side GitHub Home and Vault credentials. Runtime also requires the private `VORAX_TEACHER_ATTESTATION_KEY` shared with Teacher; Kaggle never receives this signing key. Requests may pass `child_id` and `api_key` in JSON as documented; `x-child-id` and `x-child-key` headers are preferred.
+Authentication uses the Kaggle Child identity/key plus server-side GitHub Home and Vault credentials. Runtime also requires the private `VORAX_TEACHER_ATTESTATION_KEY` shared with Teacher; Kaggle never receives this signing key. The existing remote tool adapters receive `HF_INFERENCE_TOKEN` from deployment for provider-backed execution; this is not local inference or GPU use. Requests may pass `child_id` and `api_key` in JSON as documented; `x-child-id` and `x-child-key` headers are preferred.
 
 ## Trust boundaries
 
