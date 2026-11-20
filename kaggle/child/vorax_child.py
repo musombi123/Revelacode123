@@ -194,35 +194,49 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
 
 
 def choose_teacher_models(models: list[dict], requested: str = "", count: int = 3) -> list[str]:
-    """Select distinct live remote chat providers from Hub model metadata."""
+    """Choose one live remote chat provider per distinct model from Hub metadata."""
     if not models:
         raise ConnectorError("Teacher metadata discovery returned no remotely served models")
-    provider_choices = []
-    fallback_models = []
+    selected = []
+    selected_model_ids = set()
+    if requested.strip():
+        selected.append(requested.strip())
+        selected_model_ids.add(requested.strip().split(":", 1)[0])
+    fallback = []
     for item in models:
         model_id = str(item.get("id") or "").strip()
         if not model_id:
             continue
-        fallback_models.append(model_id)
-        for provider in item.get("providers", []):
-            if not isinstance(provider, dict):
-                continue
-            if str(provider.get("status", "")).casefold() != "live":
-                continue
-            if str(provider.get("task", "")).casefold() not in {"conversational", "text-generation"}:
-                continue
-            provider_id = str(provider.get("provider") or "").strip()
-            if provider_id:
-                provider_choices.append(f"{model_id}:{provider_id}")
-    choices = list(dict.fromkeys(provider_choices + fallback_models))
-    selected = []
-    if requested.strip():
-        selected.append(requested.strip())
-    for model_ref in choices:
-        if model_ref and model_ref not in selected:
-            selected.append(model_ref)
+        fallback.append(model_id)
+        if model_id in selected_model_ids:
+            continue
+        provider_rows = [
+            p for p in item.get("providers", [])
+            if isinstance(p, dict)
+            and str(p.get("status", "")).casefold() == "live"
+            and str(p.get("task", "")).casefold() in {"conversational", "text-generation"}
+            and str(p.get("provider") or "").strip()
+        ]
+        provider_rows.sort(
+            key=lambda p: (
+                float(p.get("throughput") or 0),
+                -float(p.get("first_token_latency_ms") or 1e9),
+            ),
+            reverse=True,
+        )
+        if provider_rows:
+            provider = str(provider_rows[0]["provider"]).strip()
+            selected.append(f"{model_id}:{provider}")
+            selected_model_ids.add(model_id)
         if len(selected) >= count:
             break
+    if len(selected) < count:
+        for model_id in fallback:
+            if model_id not in selected_model_ids:
+                selected.append(model_id)
+                selected_model_ids.add(model_id)
+            if len(selected) >= count:
+                break
     return selected[:count]
 
 
