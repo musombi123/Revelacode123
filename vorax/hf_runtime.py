@@ -18,12 +18,18 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .github_home import GitHubHomeError, submit_template, sync_library
-from .input_x import handle_input_x
+from .builtins import handle_builtin_input
+from .github_home import GitHubHomeError, fetch_method_index, submit_template
+from .home_index import find_duplicate
 from .store import TemplateStore
-from .tools import execute_tool_dict
-from .vault import VaultError, inspect_vault, mark_pending_home_submission, write_pending_method
-from .vlang import TemplateError, dump_record, parse_document, validate_template
+from .vault import (
+    VaultError,
+    inspect_vault,
+    mark_pending_home_submission,
+    promote_pending_home_methods,
+    write_pending_method,
+)
+from .vlang import TemplateError, dump_record, validate_template
 
 ROOT = Path(__file__).resolve().parents[1]
 HOME_REPO = os.getenv("VORAX_HOME_REPO", "musombi123/Revelacode123")
@@ -41,9 +47,11 @@ TEACHER_MODEL = os.getenv("VORAX_TEACHER_MODEL", "").strip()
 LOGGER = logging.getLogger("vorax.runtime-service")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
+# This store contains Child rejection counters only. Home method bodies are never loaded here.
 STORE = TemplateStore(os.getenv("VORAX_DB_PATH", "/tmp/vorax-runtime.sqlite3"))
-_HOME_SYNC_AT = 0.0
-_HOME_SYNC = {"status": "not_checked", "new_methods": 0}
+_HOME_INDEX = None
+_HOME_INDEX_AT = 0.0
+_HOME_INDEX_STATUS = {"status": "not_checked", "methods_total": 0}
 app = FastAPI(
     title="VORAX Runtime Service",
     version="1.0.0",
@@ -87,38 +95,32 @@ def _require_child(child_id: str | None, child_key: str | None) -> str:
     return CHILD_ID
 
 
-def _seed_store() -> None:
-    folder = ROOT / "templates" / "library"
-    if not folder.exists():
-        return
-    for pattern in ("*.vlang", "*.tlang"):
-        for path in folder.rglob(pattern):
-            for record in parse_document(path.read_text(encoding="utf-8")):
-                STORE.add(record)
-
-
-def _refresh_home(force: bool = False) -> dict:
-    global _HOME_SYNC_AT, _HOME_SYNC
-    if not force and time.monotonic() - _HOME_SYNC_AT < 60:
-        return dict(_HOME_SYNC)
+def _refresh_home_index(force: bool = False) -> tuple[dict | None, dict]:
+    global _HOME_INDEX, _HOME_INDEX_AT, _HOME_INDEX_STATUS
+    if not force and _HOME_INDEX is not None and time.monotonic() - _HOME_INDEX_AT < 60:
+        return _HOME_INDEX, dict(_HOME_INDEX_STATUS)
     if not HOME_READ_TOKEN:
-        _HOME_SYNC = {"status": "credentials_missing", "new_methods": 0}
-        _HOME_SYNC_AT = time.monotonic()
-        return dict(_HOME_SYNC)
+        _HOME_INDEX = None
+        _HOME_INDEX_STATUS = {"status": "credentials_missing", "methods_total": 0}
+        _HOME_INDEX_AT = time.monotonic()
+        return None, dict(_HOME_INDEX_STATUS)
     try:
-        records = sync_library(HOME_REPO, HOME_BRANCH, token=HOME_READ_TOKEN)
-        added = 0
-        for record in records:
-            before = STORE.get(record["id"])
-            STORE.add(record)
-            if before is None:
-                added += 1
-        _HOME_SYNC = {"status": "synced", "new_methods": added, "home_methods": len(records)}
+        # Read only Home's metadata index; never fetch a Home V-Lang method body.
+        _HOME_INDEX = fetch_method_index(HOME_REPO, HOME_BRANCH, HOME_READ_TOKEN)
+        _HOME_INDEX_STATUS = {
+            "status": "metadata_index_read",
+            "methods_total": _HOME_INDEX["methods_total"],
+            "source": f"{HOME_REPO}/templates/library/index.json",
+        }
     except Exception as exc:
-        _HOME_SYNC = {"status": "cached", "reason": type(exc).__name__, "home_methods": len(STORE.all())}
-    _HOME_SYNC_AT = time.monotonic()
-    return dict(_HOME_SYNC)
-
+        _HOME_INDEX = None
+        _HOME_INDEX_STATUS = {
+            "status": "unavailable",
+            "methods_total": 0,
+            "reason": type(exc).__name__,
+        }
+    _HOME_INDEX_AT = time.monotonic()
+    return _HOME_INDEX, dict(_HOME_INDEX_STATUS)
 
 def _artifact_sha256(result: dict) -> str | None:
     answer = result.get("answer")
