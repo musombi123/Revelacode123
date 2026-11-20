@@ -144,3 +144,11 @@ No test or code step ran. This repeats the same runner-allocation failure and do
 - HF Vault sync now checks the resolved Dataset's `private` flag after repository creation/lookup and fails before upload if the Dataset is public.
 - The HF Docker Space and Koyeb deployment workflows are manual-only and parked. The HF Docker deployment is not part of Phase 1 unless the user confirms account eligibility for PRO compute.
 - The README now prioritizes Kaggle compute plus the HF Dataset Vault, and explicitly protects existing `MVI AI Engine`, `OmniMind`, and `Omnset` resources from accidental overwrite.
+
+
+The final recorded PR #7 head in this work session is `ac5064e7c8aeeec7c8414cfc1151208397405958`. Its latest three checks also failed before job execution:
+- `44716349150` push / job `136220621122` / `runner_id=0` / no steps
+- `44716360965` pull_request / job `136220661719` / `runner_id=0` / no steps
+- `44716354751` pull_request_target / job `136220642083` / `runner_id=0` / no steps
+
+The exact-head CI state remains blocked by runner allocation. No code-level pass/fail conclusion can be drawn from those runs.
