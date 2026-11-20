@@ -17,12 +17,12 @@ if not re.fullmatch(r"[A-Za-z0-9_-]{1,50}", slug):
 
 metadata = {
     "id": f"{username}/{slug}",
-    "title": "RevelaCode VORAX GPU Research Child",
+    "title": "VORAX Learning Connector",
     "code_file": "vorax_child.py",
     "language": "python",
     "kernel_type": "script",
     "is_private": True,
-    "enable_gpu": True,
+    "enable_gpu": False,
     "enable_internet": True,
     "dataset_sources": [],
     "competition_sources": [],
