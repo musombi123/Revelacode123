@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import time
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -263,7 +264,7 @@ def start_kaggle():
     if not queue_items():
         return log("kaggle-child", uptime_status="idle_no_queue", verification="not_executed")
     try:
-        subprocess.run([os.sys.executable, "scripts/prepare_kaggle_kernel.py"], check=True, timeout=30)
+        subprocess.run([sys.executable, "scripts/prepare_kaggle_kernel.py"], check=True, timeout=30)
         timeout = min(max(int(os.getenv("KAGGLE_TIMEOUT_SECONDS", "42000")), 60), 43200)
         accelerator = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaT4")
         result = subprocess.run(
@@ -357,11 +358,16 @@ def heartbeat():
     status = kaggle_status()
     pending = queue_items()
     state = status.get("uptime_status")
-    if pending and state not in {"running", "queued", "start_requested", "status_unknown", "failed_not_running"}:
-        start_kaggle()
-    elif pending and state == "failed_not_running":
+    if pending and state in {"running", "queued", "start_requested", "status_unknown"}:
+        log("kaggle-child", uptime_status="queue_waiting_for_session",
+            verification="not_executed", failure="Kaggle session is not confirmed ready; X remains queued")
+    elif pending and state in {"failed_not_running", "completed_not_running"}:
         log("kaggle-child", uptime_status="queued_for_next_session",
-            verification="not_executed", failure="Previous Kaggle run failed; automatic retry paused to protect quota")
+            verification="not_executed", failure="Kaggle session not active, queue X for next session; automatic retry paused to protect quota")
+    elif pending:
+        log("kaggle-child", uptime_status="queued_for_next_session",
+            verification="not_executed", failure="Kaggle session not active, queue X for next session")
+        start_kaggle()
     elif not pending:
         log("kaggle-child", uptime_status=state or "not_observed",
             verification="not_executed", failure="Kaggle session not active; no queued X to run")
