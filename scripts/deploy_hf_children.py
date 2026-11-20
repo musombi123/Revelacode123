@@ -33,6 +33,7 @@ CHILD_ID = "kaggle-child"
 REQUIRED_ENV = (
     "HF_SPACE_TOKEN",
     "HF_TOKEN",
+    "HF_READ_TOKEN",
     "VORAX_KAGGLE_CHILD_API_KEY",
     "VORAX_HOME_READ_TOKEN",
     "VORAX_HOME_WRITE_TOKEN",
@@ -208,7 +209,7 @@ def main() -> int:
 
     teacher_secrets = {
         "HF_TOKEN": env["HF_TOKEN"],
-        "HF_READ_TOKEN": os.getenv("HF_READ_TOKEN", "").strip(),
+        "HF_READ_TOKEN": env["HF_READ_TOKEN"],
         "VORAX_CHILD_ID": CHILD_ID,
         "VORAX_KAGGLE_CHILD_API_KEY": env["VORAX_KAGGLE_CHILD_API_KEY"],
         "VORAX_TEACHER_ATTESTATION_KEY": env["VORAX_TEACHER_ATTESTATION_KEY"],
@@ -254,6 +255,8 @@ def main() -> int:
     if args.health_wait_seconds:
         teacher_health = wait_health(teacher_url + "/health", args.health_wait_seconds)
         runtime_health = wait_health(runtime_url + "/health", args.health_wait_seconds)
+        if teacher_health.get("metadata_token_configured") is not True:
+            raise RuntimeError("Teacher is live but HF_READ_TOKEN for metadata discovery is missing.")
         if teacher_health.get("attestation_configured") is not True:
             raise RuntimeError("Teacher is live but its private Runtime attestation key is not configured.")
         if runtime_health.get("required_secrets", {}).get("teacher_attestation_key") is not True:
