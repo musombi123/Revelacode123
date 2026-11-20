@@ -76,6 +76,20 @@ class ToolLayerTests(unittest.TestCase):
         with self.assertRaises(tools.ToolError):
             tools.execute_tool("code.execute", {"source": "8 * 7", "tests": [{"expect": 56}]})
 
+    def test_remote_tool_provider_is_disabled_without_explicit_billable_opt_in(self):
+        with patch.dict(os.environ, {
+            "HF_TOKEN": "configured-token",
+            "HF_INFERENCE_TOKEN": "configured-token",
+        }, clear=True), patch.object(tools, "urlopen") as open_url:
+            with self.assertRaisesRegex(tools.ToolError, "disabled by default"):
+                tools._hf(
+                    "image.generate",
+                    {"inputs": "test"},
+                    timeout=1,
+                    binary=True,
+                )
+        open_url.assert_not_called()
+
     def test_missing_provider_credentials_returns_unknown(self):
         with patch.dict(os.environ, {}, clear=True):
             result = tools.execute_tool_dict("audio.tts", {"text": "hello"})
