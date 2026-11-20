@@ -12,7 +12,6 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
@@ -31,7 +30,6 @@ from .vault import (
 )
 from .vlang import TemplateError, dump_record, validate_template
 
-ROOT = Path(__file__).resolve().parents[1]
 HOME_REPO = os.getenv("VORAX_HOME_REPO", "musombi123/Revelacode123")
 HOME_BRANCH = os.getenv("VORAX_HOME_BRANCH", "main")
 VAULT_REPO = os.getenv("HF_VAULT_REPO", "Musombi/revelacode-vorax-vault")
@@ -90,8 +88,14 @@ def _require_child(child_id: str | None, child_key: str | None) -> str:
         raise HTTPException(403, "Authenticated VORAX Child required")
     if STORE.child_blocked(CHILD_ID):
         raise HTTPException(403, {"status": "blocked", "reason": "Child is blocked by the Home rejection policy"})
-    if not HOME_READ_TOKEN or not HOME_WRITE_TOKEN:
-        raise HTTPException(503, "VORAX Home read/write credentials are not configured")
+    required_secrets = {
+        "VORAX_HOME_READ_TOKEN": HOME_READ_TOKEN,
+        "VORAX_HOME_WRITE_TOKEN": HOME_WRITE_TOKEN,
+        "HF_VAULT_TOKEN": os.getenv("HF_VAULT_TOKEN", "").strip(),
+    }
+    missing = [name for name, value in required_secrets.items() if not value]
+    if missing:
+        raise HTTPException(503, "Runtime credentials are incomplete: " + ", ".join(missing))
     return CHILD_ID
 
 
