@@ -73,6 +73,7 @@ class TeacherServiceTests(unittest.TestCase):
                  "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
                  "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
              }), \
+             patch.object(hf_teacher, "_resolve_teacher_model", return_value="acme/example:test-remote-provider"), \
              patch.object(hf_teacher, "_http_json", return_value=(response, headers)) as call, \
              patch.object(hf_teacher, "_log") as log:
             result = hf_teacher.ask(
@@ -136,7 +137,8 @@ class TeacherServiceTests(unittest.TestCase):
             "VORAX_CHILD_ID": "kaggle-child",
             "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
             "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
-        }), patch.object(hf_teacher, "_http_json", return_value=(response, {})):
+        }), patch.object(hf_teacher, "_resolve_teacher_model", return_value="acme/example"), \
+             patch.object(hf_teacher, "_http_json", return_value=(response, {})):
             with self.assertRaises(HTTPException) as caught:
                 hf_teacher.ask(
                     hf_teacher.TeacherAsk(prompt="teach", model_id="acme/example"),
@@ -153,7 +155,8 @@ class TeacherServiceTests(unittest.TestCase):
             "VORAX_CHILD_ID": "kaggle-child",
             "VORAX_KAGGLE_CHILD_API_KEY": "child-test-key",
             "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
-        }), patch.object(hf_teacher, "_http_json", return_value=(response, headers)):
+        }), patch.object(hf_teacher, "_resolve_teacher_model", return_value="acme/example:provider-a"), \
+             patch.object(hf_teacher, "_http_json", return_value=(response, headers)):
             with self.assertRaises(HTTPException) as caught:
                 hf_teacher.ask(
                     hf_teacher.TeacherAsk(
@@ -164,6 +167,47 @@ class TeacherServiceTests(unittest.TestCase):
                     x_child_key="child-test-key",
                 )
         self.assertEqual(caught.exception.status_code, 502)
+
+    def test_billable_provider_is_rejected_by_default(self):
+        catalogue = [{
+            "id": "acme/example",
+            "providers": [
+                {"provider": "paid-a", "status": "live", "is_free": False, "throughput": 99},
+                {"provider": "free-b", "status": "live", "is_free": True, "throughput": 10},
+            ],
+        }]
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(hf_teacher, "_discover_router_models", return_value=catalogue):
+            resolved = hf_teacher._resolve_teacher_model("acme/example")
+        self.assertEqual(resolved, "acme/example:free-b")
+
+    def test_explicitly_pinned_paid_provider_is_rejected_by_default(self):
+        catalogue = [{
+            "id": "acme/example",
+            "providers": [
+                {"provider": "paid-a", "status": "live", "is_free": False},
+                {"provider": "free-b", "status": "live", "is_free": True},
+            ],
+        }]
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(hf_teacher, "_discover_router_models", return_value=catalogue):
+            with self.assertRaises(HTTPException) as caught:
+                hf_teacher._resolve_teacher_model("acme/example:paid-a")
+        self.assertEqual(caught.exception.status_code, 402)
+
+    def test_billable_provider_requires_explicit_service_opt_in(self):
+        catalogue = [{
+            "id": "acme/example",
+            "providers": [
+                {"provider": "paid-a", "status": "live", "is_free": False, "throughput": 99},
+            ],
+        }]
+        with patch.dict(os.environ, {"VORAX_ALLOW_BILLABLE_INFERENCE": "true"}), \
+             patch.object(hf_teacher, "_discover_router_models", return_value=catalogue):
+            self.assertEqual(
+                hf_teacher._resolve_teacher_model("acme/example"),
+                "acme/example:paid-a",
+            )
 
     def test_ask_rejects_missing_child_authentication(self):
         with patch.dict(os.environ, {"VORAX_KAGGLE_CHILD_API_KEY": "expected-key"}):
