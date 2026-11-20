@@ -191,6 +191,23 @@ def mirror_home_and_artifacts(records, artifact_root):
             "vault_capacity_verified": False,
         }, indent=2).encode("utf-8"),
         "reports/verification/latest.json": json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8"),
+        "reports/devour/latest.json": json.dumps({
+            "status": "metadata_discovery_only",
+            "synced_at": synced_at,
+            "methods_mirrored": len(methods),
+            "note": "A method is not counted as learned from discovery metadata alone.",
+        }, indent=2).encode("utf-8"),
+        "reports/go-no-go/latest.json": json.dumps({
+            "status": "BLOCKED",
+            "checked_at": synced_at,
+            "evidence": {
+                "home_methods_mirrored": len(methods),
+                "verified_media_artifacts_mirrored": len(artifact_proofs),
+                "vault_capacity_verified": False,
+                "live_child_health_campaign_gpu_and_coverage": "not_certified_by_vault_sync",
+            },
+            "reason": "Only Home can authorize GO. Live deployment, quota, real modality output, campaign, and coverage evidence remain to be verified.",
+        }, indent=2).encode("utf-8"),
     }
     for target, raw in files.items():
         _upload(api, repo, target, raw, "Update VORAX Home-to-Vault index and manifests")
