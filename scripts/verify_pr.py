@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Trusted-base verifier for data-only child template pull requests."""
 from __future__ import annotations
-import base64,json,os,re,sys,uuid,urllib.parse,urllib.request
+import base64,hashlib,json,os,re,sys,uuid,urllib.parse,urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from vorax.vlang import parse_document,fingerprint
-from vorax.home_index import build_method_index,parse_method_index
+from vorax.vlang import parse_document,fingerprint,dump_record
 
 repo=os.environ["GITHUB_REPOSITORY"]; number=os.environ["PR_NUMBER"]; token=os.environ["GITHUB_TOKEN"]
 api="https://api.github.com"
@@ -140,15 +139,31 @@ for t in proposals:
     existing_triggers.update(trigger_keys)
     existing_records.append(t)
 
-# Home verifies the index from trusted base methods plus the Child's proposed methods.
-expected_index=build_method_index(existing_records)
+# Home verifies a metadata-only index using only trusted base interpreter code.
+# This verifier is executed from the base commit, so it must not import modules introduced by the Child PR.
+index_records=[]
+for record in existing_records:
+    canonical=dump_record(record).encode("utf-8")
+    index_records.append({
+        "id":record["id"],
+        "domain":record["domain"],
+        "task":record["task"],
+        "triggers":list(record["triggers"]),
+        "method_sha256":hashlib.sha256(canonical).hexdigest(),
+    })
+index_records.sort(key=lambda item:item["id"])
+expected_index={
+    "version":"vorax-home-method-index/v1",
+    "methods_total":len(index_records),
+    "records":index_records,
+}
 index_blob=get(f"/repos/{repo}/contents/templates/library/index.json?ref={pr['head']['sha']}")
 try:
-    submitted_index=parse_method_index(base64.b64decode(index_blob["content"]).decode("utf-8"))
+    submitted_index=json.loads(base64.b64decode(index_blob["content"]).decode("utf-8"))
 except Exception as exc:
     reject("Home metadata index is invalid: "+str(exc)[:180])
-if submitted_index!=expected_index:
-    reject("Home metadata index is not the exact metadata-only summary of Home plus proposed methods")
+if not isinstance(submitted_index,dict) or submitted_index!=expected_index:
+    reject("Home metadata index is not the exact metadata/hash summary of Home plus proposed methods")
 
 
 print(f"PASS: {len(proposals)} child template(s): structure, safety, duplicate checks, and executable tests")
