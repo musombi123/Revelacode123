@@ -12,13 +12,13 @@ VORAX is one shared runtime and one V-Lang method system. Hosting platforms are 
 
 | Component | Responsibility | Honest availability |
 |---|---|---|
-| GitHub Actions | Sole scheduler; pings Children every 30 minutes, checks Kaggle status, starts a bounded Kaggle run when queued X exists, records evidence and finalizes the 7-day campaign | Scheduled workflow; no VORAX runtime execution on GitHub |
+| GitHub Actions | Release-gated scheduler; reads the latest published release, pings Children, checks Kaggle status, starts a bounded Kaggle run when queued X exists, records evidence and finalizes the 7-day campaign | Scheduler workflow is configured on Home; it checks out the latest published release before running VORAX controller code |
 | Koyeb | Lightweight shared `vorax/` HTTP runtime; `GET /health`, `POST /vorax/x`; quick deterministic/text X; queues heavy X for Kaggle | Free service may scale to zero. A ping is best-effort, not an uptime guarantee |
 | Kaggle | Ephemeral research worker using the same shared `vorax/` package and V-Lang; checks real NVIDIA telemetry; processes queued tasks only while its kernel session is running | Not a permanent API. The controller starts a bounded run when a queue exists; availability and quotas are Kaggle-controlled |
 | Hugging Face Space | Backup Docker Child running the same shared runtime | Backup only; deploy and health must be verified separately |
 | Hugging Face Dataset | Private Vault mirror of Home-merged methods, independently verified artifacts, indexes and reports | Capacity is not presumed to be 1 TB; quota must be checked in the account |
 
-The controller cron is `17,47 * * * *`. It does not run VORAX itself. It probes Koyeb and the HF backup, checks Kaggle kernel status, and starts Kaggle only when queued work exists and no active session is observed. A Koyeb 502/503 is logged as “Koyeb asleep, retry later” rather than counted as a permanent Child failure.
+The controller cron is `17,47 * * * *`. It does not run VORAX itself on the GitHub runner. Before executing, it resolves the latest published GitHub Release and checks out that tag; the Kaggle kernel is pushed from the same immutable tag. It probes Koyeb and the HF backup, checks Kaggle kernel status, and starts Kaggle only when queued work exists and no active session is observed. A Koyeb 502/503 is logged as “Koyeb asleep, retry later” rather than counted as a permanent Child failure.
 
 ## Input X routing
 
@@ -41,11 +41,13 @@ Both PR gates check out the trusted base revision. They do not execute scripts s
 
 ## Deploy and configure
 
-Deployment workflows are manual and run only from `main`. Merge this implementation PR before dispatching them.
+Deployment workflows run on a **published GitHub Release** or a manual dispatch against that release tag. Every deploy checks out the exact tag SHA and calls `scripts/require_green_release.py`, which fails closed unless the tag is published, resolves to the run SHA, is contained in current `main`, and the latest exact-SHA `verify` check is completed with `success`. Dispatching from a branch is rejected. Workflow files are configuration, not evidence that any external Child is live.
+
+Koyeb is deployed with the release SHA and then configured with `--git-no-deploy-on-push`; a later push to `main` must not redeploy it. The Koyeb deploy workflow is still manual/release-triggered, but the Koyeb service itself must have native branch auto-deploy disabled. Kaggle's worker receives a `vorax-release.json` pin and verifies the cloned commit SHA before starting the shared runtime. The Self-Ping Controller checks out the latest published release before running, so it cannot republish current `main` code over the released kernel.
 
 ### Koyeb
 
-Workflow: `.github/workflows/deploy-koyeb-child.yml`
+Workflow: `.github/workflows/deploy-koyeb-child.yml` (published-release event or manual dispatch from a release tag)
 
 Required GitHub Actions secrets:
 - `KOYEB_API_TOKEN`
@@ -59,13 +61,13 @@ Optional secrets/variables:
 - `LEGEND_TEACHER_API_KEY`
 - Variable `LEGEND_TEACHER_MODEL`; optional `LEGEND_TEACHER_BASE_URL`
 
-The Koyeb workflow creates service secrets and deploys the shared root Dockerfile. It configures `VORAX_CHILD_ROLE=koyeb`, uses temporary `/tmp` storage, and configures the `/health` check. The service can sleep on the free tier.
+The Koyeb workflow creates service secrets and deploys the shared root Dockerfile at the exact release SHA. It configures `VORAX_CHILD_ROLE=koyeb`, uses temporary `/tmp` storage, configures the `/health` check, and disables Git branch auto-deploy after the release deployment. The service may sleep; the controller records sleep/unavailable responses rather than claiming uptime.
 
 Set repository variable `VORAX_KOYEB_URL` to the service base URL for the controller.
 
 ### Kaggle
 
-Workflow: `.github/workflows/deploy-kaggle-child.yml`
+Workflow: `.github/workflows/deploy-kaggle-child.yml` (published-release event or manual dispatch from a release tag)
 
 Required GitHub Actions secrets:
 - `KAGGLE_USERNAME`
@@ -74,7 +76,7 @@ Required GitHub Actions secrets:
 Variable:
 - `KAGGLE_KERNEL_SLUG` — for example `revelacode-vorax-child`
 
-The publish workflow uses `kaggle kernels push --no-run`: it publishes source and metadata but does not start a GPU session. The Self-Ping Controller starts the configured kernel when queued work exists. Optional variable `KAGGLE_ACCELERATOR` defaults to `NvidiaTeslaT4`.
+The publish workflow uses `kaggle kernels push --no-run`: it publishes the selected release source and its SHA pin but does not start a GPU session. The Self-Ping Controller starts the configured kernel when queued work exists, using the latest published release source. The worker refuses to clone a different commit from the release pin. A live GPU session still requires a completed Kaggle run report with actual `nvidia-smi` evidence. Optional variable `KAGGLE_ACCELERATOR` defaults to `NvidiaTeslaT4`.
 
 Add these Kaggle Notebook secrets in the Kaggle account settings:
 - `VORAX_HOME_READ_TOKEN`
@@ -93,7 +95,7 @@ Set repository variables `VORAX_KOYEB_URL`, `VORAX_HF_CHILD_URL`, and `KAGGLE_KE
 
 ### Hugging Face backup Child and Vault
 
-Workflow: `.github/workflows/deploy-hf-child.yml`
+Workflow: `.github/workflows/deploy-hf-child.yml` (published-release event or manual dispatch from a release tag)
 
 Required GitHub Actions secret: `HF_SPACE_TOKEN`, with permission to create/update the target Space.
 

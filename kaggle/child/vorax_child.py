@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -13,7 +14,6 @@ import urllib.request
 from pathlib import Path
 
 REPO = os.getenv("LEGEND_HOME_REPO", "musombi123/Revelacode123")
-BRANCH = "main"
 ROOT = Path("/kaggle/working/vorax-home")
 REPORT = Path("/kaggle/working/vorax-kaggle-report.json")
 API = "http://127.0.0.1:8765"
@@ -49,7 +49,22 @@ def github(method: str, path: str, token: str, payload=None):
         return json.loads(raw.decode()) if raw else {}
 
 
+def load_release_pin():
+    manifest = Path(__file__).with_name("vorax-release.json")
+    if not manifest.is_file():
+        raise RuntimeError("Kaggle release pin manifest is missing; refusing to clone main")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if payload.get("schema") != "vorax-release/v1":
+        raise RuntimeError("Unsupported Kaggle release pin manifest")
+    ref = str(payload.get("ref", "")).strip()
+    sha = str(payload.get("sha", "")).strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,128}", ref) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise RuntimeError("Kaggle release pin manifest is invalid")
+    return ref, sha
+
+
 def clone_home(read_token: str):
+    release_ref, expected_sha = load_release_pin()
     if ROOT.exists():
         subprocess.run(["rm", "-rf", str(ROOT)], check=True)
     encoded = base64.b64encode(("x-access-token:" + read_token).encode()).decode()
@@ -58,10 +73,18 @@ def clone_home(read_token: str):
     env["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraheader"
     env["GIT_CONFIG_VALUE_0"] = "AUTHORIZATION: basic " + encoded
     subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", BRANCH,
+        ["git", "clone", "--depth", "1", "--branch", release_ref,
          "https://github.com/" + REPO + ".git", str(ROOT)],
         check=True, timeout=180, env=env,
     )
+    actual_sha = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True, timeout=30
+    ).strip().lower()
+    if actual_sha != expected_sha:
+        subprocess.run(["rm", "-rf", str(ROOT)], check=False)
+        raise RuntimeError(
+            f"Kaggle checkout mismatch: expected {expected_sha}, received {actual_sha}"
+        )
 
 
 def gpu_telemetry():

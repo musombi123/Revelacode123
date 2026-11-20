@@ -1,10 +1,13 @@
 name: Deploy VORAX Koyeb Lightweight Child
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: read
+  checks: read
 
 jobs:
   deploy:
@@ -12,6 +15,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Checkout exact tagged release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a published release and green exact-SHA CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/require_green_release.py
+
       - name: Require Koyeb and GitHub Home credentials
         env:
           KOYEB_API_TOKEN: ${{ secrets.KOYEB_API_TOKEN }}
@@ -108,6 +123,7 @@ jobs:
           service-name: koyeb-child
           git-url: github.com/${{ github.repository }}
           git-branch: main
+          git-sha: ${{ github.sha }}
           git-builder: docker
           service-type: web
           service-instance-type: free
@@ -116,3 +132,9 @@ jobs:
           service-ports: '8000:http'
           service-routes: '/:8000'
           service-checks: '8000:http:/health'
+
+      - name: Pin exact release and disable Koyeb branch auto-deploy
+        run: |
+          koyeb service update revelacode-vorax/koyeb-child \
+            --git-sha "$GITHUB_SHA" \
+            --git-no-deploy-on-push
