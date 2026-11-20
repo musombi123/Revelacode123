@@ -263,33 +263,15 @@ def collect_report(kernel):
 
 
 def start_kaggle():
-    kernel = os.getenv("KAGGLE_KERNEL", "").strip()
-    if not kernel or not os.getenv("KAGGLE_USERNAME") or not _has_kaggle_credentials():
-        return log("kaggle-child", uptime_status="not_configured", failure="Kaggle API token/kernel missing")
-    if not queue_items():
-        return log("kaggle-child", uptime_status="idle_no_queue", verification="not_executed")
-    try:
-        subprocess.run([sys.executable, "scripts/prepare_kaggle_kernel.py"], check=True, timeout=30)
-        timeout = min(max(int(os.getenv("KAGGLE_TIMEOUT_SECONDS", "42000")), 60), 43200)
-        accelerator = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaP100")
-        result = subprocess.run(
-            ["kaggle", "kernels", "push", "-p", "kaggle/child",
-             "--timeout", str(timeout), "--accelerator", accelerator],
-            capture_output=True, text=True, timeout=180, check=False,
-        )
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        return log("kaggle-child", uptime_status="start_failed", verification="not_executed",
-                   failure=type(exc).__name__ + ": " + str(exc)[:180])
-    output = (result.stdout + "\n" + result.stderr)[:1500]
+    """Block the retired queue/GPU launcher; the current Child is GPU-disabled."""
     return log(
         "kaggle-child",
-        uptime_status="start_requested" if result.returncode == 0 else "start_failed",
+        uptime_status="legacy_gpu_launcher_disabled",
         verification="not_executed",
-        failure=None if result.returncode == 0 else "Kaggle kernel push failed",
-        kaggle_kernel=kernel,
-        timeout_seconds=timeout,
-        accelerator_requested=accelerator,
-        status_excerpt=output,
+        failure=(
+            "The legacy queue/GPU worker is retired. Publish and run the current "
+            "metadata-only Kaggle Learning Connector instead."
+        ),
     )
 
 
