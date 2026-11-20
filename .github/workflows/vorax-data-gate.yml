@@ -1,0 +1,59 @@
+name: VORAX Home Data-Only Gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'docs/vorax/**'
+      - 'templates/library/index.json'
+      - 'templates/library/vlang/index.json'
+      - 'templates/library/vlang/pending/index.json'
+      - 'manifest/**'
+      - 'reports/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  verify-and-merge-data:
+    if: github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Only the trusted verifier from the base commit executes.
+      - name: Checkout trusted Home base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate data-only changes
+        id: data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python scripts/verify_data_pr.py
+
+      - name: Require successful core CI on the exact PR head commit
+        if: steps.data.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          VORAX_CI_WAIT_SECONDS: '1200'
+        run: python scripts/wait_for_ci.py
+
+      - name: Auto-merge only validated data-only improvement
+        if: steps.data.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: gh pr merge "$PR_NUMBER" --squash --delete-branch --match-head-commit "$PR_HEAD_SHA"
