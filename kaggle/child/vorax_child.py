@@ -194,50 +194,49 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
 
 
 def choose_teacher_models(models: list[dict], requested: str = "", count: int = 3) -> list[str]:
-    """Choose one live remote chat provider per distinct model from Hub metadata."""
+    """Choose distinct remotely served chat teachers; never select an offline/unserved model."""
     if not models:
-        raise ConnectorError("Teacher metadata discovery returned no remotely served models")
+        raise ConnectorError("Teacher metadata discovery returned no models")
     selected = []
     selected_model_ids = set()
-    if requested.strip():
-        selected.append(requested.strip())
-        selected_model_ids.add(requested.strip().split(":", 1)[0])
-    fallback = []
+    requested_id = requested.strip().split(":", 1)[0] if requested.strip() else ""
     for item in models:
         model_id = str(item.get("id") or "").strip()
         if not model_id:
             continue
-        fallback.append(model_id)
-        if model_id in selected_model_ids:
-            continue
-        provider_rows = [
-            p for p in item.get("providers", [])
-            if isinstance(p, dict)
-            and str(p.get("status", "")).casefold() == "live"
-            and str(p.get("task", "")).casefold() in {"conversational", "text-generation"}
-            and str(p.get("provider") or "").strip()
+        providers = [
+            provider for provider in item.get("providers", [])
+            if isinstance(provider, dict)
+            and str(provider.get("status", "")).casefold() == "live"
+            and str(provider.get("task", "")).casefold() in {"conversational", "text-generation"}
+            and str(provider.get("provider") or "").strip()
         ]
-        provider_rows.sort(
-            key=lambda p: (
-                float(p.get("throughput") or 0),
-                -float(p.get("first_token_latency_ms") or 1e9),
+        if not providers:
+            continue
+        providers.sort(
+            key=lambda provider: (
+                float(provider.get("throughput") or 0),
+                -float(provider.get("first_token_latency_ms") or 1e9),
             ),
             reverse=True,
         )
-        if provider_rows:
-            provider = str(provider_rows[0]["provider"]).strip()
-            selected.append(f"{model_id}:{provider}")
-            selected_model_ids.add(model_id)
-        if len(selected) >= count:
+        # Honour an explicitly selected model only if it is present in the live catalogue.
+        if requested_id and model_id != requested_id:
+            continue
+        if model_id in selected_model_ids:
+            continue
+        provider = str(providers[0]["provider"]).strip()
+        selected.append(f"{model_id}:{provider}")
+        selected_model_ids.add(model_id)
+        if len(selected) >= count or requested_id:
             break
-    if len(selected) < count:
-        for model_id in fallback:
-            if model_id not in selected_model_ids:
-                selected.append(model_id)
-                selected_model_ids.add(model_id)
-            if len(selected) >= count:
-                break
-    return selected[:count]
+    if requested_id and not selected:
+        raise ConnectorError(
+            "The requested model has no live conversational Inference Provider in the current metadata catalogue"
+        )
+    if not selected:
+        raise ConnectorError("No live conversational Inference Provider models were found")
+    return selected
 
 
 def ask_remote_teacher(prompt: str, model_id: str, child_key: str) -> dict:
