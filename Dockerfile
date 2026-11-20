@@ -5,7 +5,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certi
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY vorax ./vorax
-COPY templates ./templates
 COPY security ./security
 RUN mkdir -p /app/data/artifacts
 EXPOSE 8000
