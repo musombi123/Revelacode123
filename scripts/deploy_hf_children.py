@@ -253,6 +253,10 @@ def main() -> int:
     if args.health_wait_seconds:
         teacher_health = wait_health(teacher_url + "/health", args.health_wait_seconds)
         runtime_health = wait_health(runtime_url + "/health", args.health_wait_seconds)
+        if teacher_health.get("attestation_configured") is not True:
+            raise RuntimeError("Teacher is live but its private Runtime attestation key is not configured.")
+        if runtime_health.get("required_secrets", {}).get("teacher_attestation_key") is not True:
+            raise RuntimeError("Runtime is live but its Teacher attestation key is missing.")
         report["teacher"]["health"] = teacher_health
         report["teacher"]["live"] = True
         report["runtime"]["health"] = runtime_health
