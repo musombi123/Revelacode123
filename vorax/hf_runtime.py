@@ -25,6 +25,7 @@ from .vault import (
     VaultError,
     inspect_vault,
     mark_pending_home_submission,
+    pending_duplicate_reason,
     promote_pending_home_methods,
     write_pending_method,
 )
@@ -221,6 +222,25 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
             reason=type(exc).__name__,
         )
         raise HTTPException(422, {"status": "blocked", "verification": "failed", "reason": str(exc)[:400]}) from exc
+
+    try:
+        pending_duplicate = pending_duplicate_reason(record)
+    except VaultError as exc:
+        raise HTTPException(503, "Vault pending index could not be inspected: " + str(exc)) from exc
+    if pending_duplicate:
+        _log(
+            "method_already_pending",
+            child_id=child_id,
+            x=_redact_x(x_value),
+            method=record["id"],
+            verification="duplicate_in_vault_pending",
+            duplicate_reason=pending_duplicate,
+        )
+        raise HTTPException(409, {
+            "status": "unknown",
+            "reason": pending_duplicate,
+            "home_certification": "pending",
+        })
 
     verification = {
         "status": "runtime_tests_passed",
