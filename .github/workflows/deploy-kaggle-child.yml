@@ -1,0 +1,38 @@
+name: Publish VORAX Kaggle GPU Research Child
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted Home
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Kaggle CLI
+        run: python -m pip install --disable-pip-version-check kaggle
+
+      - name: Publish kernel source without starting a GPU session
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_KERNEL_SLUG: ${{ vars.KAGGLE_KERNEL_SLUG }}
+        run: |
+          test -n "$KAGGLE_USERNAME" || { echo 'Missing KAGGLE_USERNAME'; exit 1; }
+          test -n "$KAGGLE_KEY" || { echo 'Missing KAGGLE_KEY'; exit 1; }
+          python scripts/prepare_kaggle_kernel.py
+          kaggle kernels push -p kaggle/child --no-run

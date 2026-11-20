@@ -1,51 +1,137 @@
 ---
-title: VORAX Child
+title: VORAX — One Input X
 sdk: docker
 app_port: 8000
 ---
 
 # VORAX — One Input X
 
-VORAX is a general-purpose execution engine, not a model. It classifies one input X, resolves verified V-Lang procedures from Home, calls registered providers, and reports success only when execution evidence is independently verified.
+VORAX is one shared runtime and one V-Lang method system. Hosting platforms are Children, not separate engines. GitHub Home is the trusted authority. RevelaAI is not connected or modified.
 
-## Canonical runtime
+## Locked runtime topology
 
-- `vorax/` is the single shared runtime used by hosted Children.
-- `vorax/api.py` exposes `GET /health`, `POST /vorax/x`, and authenticated `POST /v1/vault/sync`.
-- Hugging Face Child and AWS Child are hosting adapters around the same package.
-- GitHub repository `musombi123/Revelacode123` is the trusted Home. The HF Dataset Vault is a backup mirror only.
-- No model package, weights, `config.json`, `architectures`, or `model_type` is part of this runtime.
+| Component | Responsibility | Honest availability |
+|---|---|---|
+| GitHub Actions | Sole scheduler; pings Children every 30 minutes, checks Kaggle status, starts a bounded Kaggle run when queued X exists, records evidence and finalizes the 7-day campaign | Scheduled workflow; no VORAX runtime execution on GitHub |
+| Koyeb | Lightweight shared `vorax/` HTTP runtime; `GET /health`, `POST /vorax/x`; quick deterministic/text X; queues heavy X for Kaggle | Free service may scale to zero. A ping is best-effort, not an uptime guarantee |
+| Kaggle | Ephemeral research worker using the same shared `vorax/` package and V-Lang; checks real NVIDIA telemetry; processes queued tasks only while its kernel session is running | Not a permanent API. The controller starts a bounded run when a queue exists; availability and quotas are Kaggle-controlled |
+| Hugging Face Space | Backup Docker Child running the same shared runtime | Backup only; deploy and health must be verified separately |
+| Hugging Face Dataset | Private Vault mirror of Home-merged methods, independently verified artifacts, indexes and reports | Capacity is not presumed to be 1 TB; quota must be checked in the account |
 
-## Hugging Face deployment
+The controller cron is `17,47 * * * *`. It does not run VORAX itself. It probes Koyeb and the HF backup, checks Kaggle kernel status, and starts Kaggle only when queued work exists and no active session is observed. A Koyeb 502/503 is logged as “Koyeb asleep, retry later” rather than counted as a permanent Child failure.
 
-Target Docker Space: `musombi123/revelacode-vorax-child`. Add GitHub secret `HF_SPACE_TOKEN` with permission to create/update that Space. Workflow `.github/workflows/deploy-hf-child.yml` uploads the shared runtime.
+## Input X routing
 
-Configure these Space secrets:
-- `VORAX_CHILD_ID=hf-child`
-- `VORAX_CHILD_API_KEY`
-- `LEGEND_HOME_REPO=musombi123/Revelacode123`
-- `LEGEND_GITHUB_TOKEN` (read-only Home access)
-- `HF_TOKEN` or `HF_INFERENCE_TOKEN` for approved inference calls
-- `HF_VAULT_TOKEN` (write access to the Dataset Vault only)
-- `HF_VAULT_REPO=musombi123/revelacode-vorax-vault`
+- Koyeb handles light deterministic/text tasks through the shared runtime.
+- Heavy modalities classified as image, logo, music, video, speech/audio or 3D are placed in a private GitHub Home queue. The response is `queued` and `verification=not_executed`; queuing is not execution.
+- Kaggle reads queued X while a kernel session is available, checks local GPU telemetry with `nvidia-smi`, starts the shared runtime, and records a worker report.
+- Kaggle currently includes the research/queue worker and model-metadata discovery. **The local GPU image/audio/music/video/3D inference adapters are not yet implemented.** Heavy media tasks are marked `blocked_local_gpu_adapter`; the worker does not claim it generated PNG, WAV or MP4 files. The current `vorax.tools` provider adapters use Hugging Face Inference endpoints, which are remote provider execution and do not prove Kaggle GPU usage.
 
-## GPU and storage: actual platform limits
+Do not put passwords, API keys, private records or sensitive personal data in the GitHub X queue. The queue is stored as an issue in this private repository.
 
-This service is a Docker/FastAPI Space. Hugging Face ZeroGPU is shared RTX Pro 6000 hardware for Gradio Spaces, not a free T4 option for Docker. If a Docker Space needs a local GPU, request a paid T4 small in Space Settings (currently listed at USD 0.40/hour). The runtime reports local GPU telemetry only when `nvidia-smi` can observe a device. Current HF Inference Provider calls use remote provider compute; they do not prove local Space GPU usage.
+## Home trust and auto-merge policy
 
-The Dataset Vault is created as a private Dataset repository on first authenticated sync. Hugging Face does not grant 1TB private storage to a free account; confirm plan quota or upgrade before relying on 1TB. The Vault does not replace GitHub Home's PR/CI validation gate.
+All Child proposals go to GitHub Home through pull requests. Children cannot merge or certify themselves.
 
-## Vault sync
+- V-Lang proposals: the trusted-base verifier reads the PR as data, validates schema and duplicate checks, and runs declared V-Lang test vectors through the trusted interpreter and its registered contract test stub. The trusted core CI must also succeed on the exact PR head SHA before auto-merge.
+- Data-only improvements: only allowlisted `docs/vorax/**`, V-Lang index JSON, `manifest/**/*.json` and `reports/**/*.json` can enter the data gate. Home checks paths, JSON structure, active HTML and credential-like fields, then waits for exact-head CI.
+- Executable code, Python/JavaScript/shell, dependencies, Dockerfile, project configuration, deployment workflows, templates/actions, secrets and permission changes are not eligible for data auto-merge. They require trusted human review.
 
-After the Space is deployed and its secrets configured, call `POST /v1/vault/sync` with `x-child-id` and `x-child-key`. It fetches canonical V-Lang methods from GitHub Home, independently verifies local PNG/WAV/MP4 artifacts, and uploads the method/artifact mirror plus a manifest to the Dataset Vault. It never mirrors unverified artifacts.
+Both PR gates check out the trusted base revision. They do not execute scripts supplied by a Child PR. A mixed PR containing code and data is rejected from the data-only gates.
 
-## Local checks
+## Deploy and configure
+
+Deployment workflows are manual and run only from `main`. Merge this implementation PR before dispatching them.
+
+### Koyeb
+
+Workflow: `.github/workflows/deploy-koyeb-child.yml`
+
+Required GitHub Actions secrets:
+- `KOYEB_API_TOKEN`
+- `VORAX_KOYEB_CHILD_API_KEY`
+- `VORAX_HOME_READ_TOKEN` — read access to this private Home repository
+- `VORAX_HOME_WRITE_TOKEN` — create/update queue issues and submit Child proposal PRs
+
+Optional secrets/variables:
+- `HF_VAULT_TOKEN` — write access to the Dataset Vault
+- `HF_INFERENCE_TOKEN` — remote HF Inference access; this is not local Kaggle GPU use
+- `LEGEND_TEACHER_API_KEY`
+- Variable `LEGEND_TEACHER_MODEL`; optional `LEGEND_TEACHER_BASE_URL`
+
+The Koyeb workflow creates service secrets and deploys the shared root Dockerfile. It configures `VORAX_CHILD_ROLE=koyeb`, uses temporary `/tmp` storage, and configures the `/health` check. The service can sleep on the free tier.
+
+Set repository variable `VORAX_KOYEB_URL` to the service base URL for the controller.
+
+### Kaggle
+
+Workflow: `.github/workflows/deploy-kaggle-child.yml`
+
+Required GitHub Actions secrets:
+- `KAGGLE_USERNAME`
+- `KAGGLE_KEY`
+
+Variable:
+- `KAGGLE_KERNEL_SLUG` — for example `revelacode-vorax-child`
+
+The publish workflow uses `kaggle kernels push --no-run`: it publishes source and metadata but does not start a GPU session. The Self-Ping Controller starts the configured kernel when queued work exists. Optional variable `KAGGLE_ACCELERATOR` defaults to `NvidiaTeslaT4`.
+
+Add these Kaggle Notebook secrets in the Kaggle account settings:
+- `VORAX_HOME_READ_TOKEN`
+- `VORAX_HOME_WRITE_TOKEN`
+- `VORAX_KAGGLE_CHILD_API_KEY`
+
+Optional Kaggle Notebook secrets:
+- `VORAX_CHILD_PROPOSAL_TOKEN` (otherwise the Home write token is used)
+- `HF_VAULT_TOKEN`
+- `HF_INFERENCE_TOKEN`
+- `LEGEND_TEACHER_API_KEY`
+- `LEGEND_TEACHER_MODEL`
+- `LEGEND_TEACHER_BASE_URL`
+
+Set repository variables `VORAX_KOYEB_URL`, `VORAX_HF_CHILD_URL`, and `KAGGLE_KERNEL_SLUG` for the controller. The Kaggle run timeout defaults to 42,000 seconds, below the 12-hour session ceiling in the current configuration; actual availability and quota remain platform-controlled.
+
+### Hugging Face backup Child and Vault
+
+Workflow: `.github/workflows/deploy-hf-child.yml`
+
+Required GitHub Actions secret: `HF_SPACE_TOKEN`, with permission to create/update the target Space.
+
+Exact repositories:
+- Docker Space: `Musombi/revelacode-vorax-child`
+- Private Dataset Vault: `Musombi/revelacode-vorax-vault`
+
+Configure the Space with `VORAX_CHILD_ID=hf-child`, `VORAX_CHILD_API_KEY`, Home read credentials, and the optional inference/teacher settings needed by that Space. For Vault writes, configure `HF_VAULT_TOKEN` and `HF_VAULT_REPO=Musombi/revelacode-vorax-vault`. A Docker Space GPU is not implied by remote HF inference.
+
+### Start the 7-day campaign
+
+After configuring the repository variables and secrets, open Actions → VORAX Self-Ping Controller → Run workflow → `start-campaign`. The controller records UTC start and end timestamps in a Home issue. Scheduled heartbeats finalize the campaign after seven days. The workflow also supports `queue-x`, `status`, `start-kaggle` and `stop-campaign`.
+
+## Vault structure
+
+The sync writes Home-merged V-Lang methods to `vlang/verified/`; pending methods remain PRs and are not promoted. Verified media is written to `artifacts/images/`, `artifacts/audio/` and `artifacts/video/` by SHA-256. Indexes, checksums and runtime/sync manifests are written under `vlang/` and `manifest/`; current verification, Devour and GO/NO-GO reports are written under `reports/`.
+
+PNG, WAV and MP4 must pass independent format checks before upload. MP4 requires more than 10 decoded frames and positive duration; WAV must contain non-silent samples; PNG must decode and not be a single-colour blank. The sync report explicitly keeps Vault capacity unverified.
+
+## Local verification
 
 ```bash
 python -m pip install -r requirements.txt
 python scripts/verify_library.py
 python -m unittest discover -s tests -v
-python -m compileall -q vorax scripts
+python -m compileall -q vorax scripts kaggle/child
+docker build --tag revelacode-vorax:local .
 ```
 
-RevelaAI is not connected or modified. GO / NO-GO remains BLOCKED until live Child health, actual approved GPU telemetry, confirmed Vault quota, real PNG/WAV/MP4 uploads and Home mirror proofs are collected.
+## GO / NO-GO
+
+**GO / NO-GO remains BLOCKED.** This PR establishes deployment/configuration workflows, honest health checks, X queueing, the controller, data-only trust gates and structured Vault sync. It does not establish that the external services have been deployed or that Kaggle media generation works.
+
+Home must still collect and verify:
+1. Live Koyeb, Kaggle-session and HF Child evidence.
+2. Actual Kaggle local GPU execution plus real non-empty PNG, WAV and MP4 with SHA-256 and size.
+3. Confirmed HF Vault quota and successful sync evidence.
+4. At least one Koyeb-origin and one Kaggle-origin V-Lang method independently validated and merged by Home.
+5. At least 90% verified common-X coverage, the complete seven-day campaign, and green CI/security checks.
+
+AWS is postponed. No `hf-model/` or separate runtime engine is introduced. RevelaAI remains untouched.

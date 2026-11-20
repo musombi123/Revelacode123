@@ -26,6 +26,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: python scripts/verify_pr.py
+      - name: Require successful core CI on the exact PR head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          VORAX_CI_WAIT_SECONDS: '1200'
+        run: python scripts/wait_for_ci.py
+
       - name: Auto-merge verified V-Lang proposal
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

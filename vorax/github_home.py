@@ -52,3 +52,24 @@ def submit_template(repo: str,branch: str,child_id: str,template: dict,token: st
         "body":f"Automated V-Lang proposal from child {child_id}. Home will verify schema, safety, duplicates, and executable tests.",
         "head":new_branch,"base":branch})
     return {"pull_request":pr["html_url"],"number":pr["number"],"branch":new_branch,"template_id":record["id"],"file":path}
+
+
+def enqueue_kaggle_x(repo: str, value: str, token: str) -> dict:
+    """Queue heavy X for the ephemeral Kaggle worker; this function does not execute it."""
+    if not token:
+        raise GitHubHomeError("LEGEND_GITHUB_TOKEN is not configured for queue creation")
+    if not isinstance(value, str) or not value.strip() or len(value) > 12000:
+        raise ValueError("X must be non-empty text of at most 12000 characters")
+    if re.search(r"(?i)(api[_ -]?key|password|secret|token)\s*[:=]\s*\S+", value):
+        raise ValueError("X looks like it may contain a credential; remove it before queuing")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError("Invalid Home repository")
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    payload = {"version": "vorax-x-queue/v1", "status": "queued", "x": value,
+               "queued_at": stamp, "source": "koyeb_input_x"}
+    body = ("<!-- VORAX_X_QUEUE_V1 -->\n" + json.dumps(payload, ensure_ascii=False, indent=2) +
+            "\n\nDo not put passwords, API keys, private records, or sensitive personal data in this queue.")
+    issue = _api("POST", f"/repos/{repo}/issues", token,
+                 {"title": "[VORAX-X] " + time.strftime("%Y%m%d-%H%M%S", time.gmtime()), "body": body})
+    return {"number": issue.get("number"), "url": issue.get("html_url"),
+            "status": "queued", "destination_child": "kaggle-child", "verification": "not_executed"}

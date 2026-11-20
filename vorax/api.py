@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from vorax.engine import compose, find_template
-from vorax.github_home import GitHubHomeError, submit_template, sync_library
+from vorax.github_home import GitHubHomeError, submit_template, sync_library, enqueue_kaggle_x
 from vorax.store import TemplateStore
 from vorax.teacher import propose_template, teacher_configured
 from vorax.vlang import TemplateError, parse_document, validate_template, execute
@@ -85,7 +85,7 @@ def gpu_telemetry():
 def health():
     return {"status":"ok","engine":"VORAX","templates":len(STORE.all()),"teacher_configured":teacher_configured(),
       "home_repository":HOME_REPO,"vault_configured":bool(os.getenv("HF_VAULT_TOKEN")),
-      "vault_repository":os.getenv("HF_VAULT_REPO","musombi123/revelacode-vorax-vault"),
+      "vault_repository":os.getenv("HF_VAULT_REPO","Musombi/revelacode-vorax-vault"),
       "local_gpu":gpu_telemetry(),"model_required_for_composition":False}
 
 @app.get("/v1/gpu")
@@ -432,6 +432,16 @@ def vorax_input_x(body: dict, request: Request):
         classification=classify_input_x(value,STORE.all())
     except ValueError as exc:
         raise HTTPException(422,str(exc)) from exc
+    # Koyeb is the light router: heavyweight modalities are queued for Kaggle, never executed here.
+    if os.getenv("VORAX_CHILD_ROLE","").strip().lower()=="koyeb" and classification.get("task_type") in {"image","logo","music","video","speech","audio","3d"}:
+        actor(request)
+        try:
+            queued=enqueue_kaggle_x(HOME_REPO,value,os.getenv("LEGEND_GITHUB_TOKEN",""))
+        except (GitHubHomeError,ValueError) as exc:
+            raise HTTPException(503,"Heavy X could not be queued for Kaggle: "+str(exc)[:240]) from exc
+        return {"status":"queued","engine":"VORAX","classification":classification,
+                "destination_child":"kaggle-child","verification":"not_executed","queue":queued}
+
     home_status=_refresh_home_catalog()
     # Any paid/external tool call must come through an authenticated child or admin.
     if classification.get("tool"):

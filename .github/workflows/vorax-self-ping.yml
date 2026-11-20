@@ -1,0 +1,80 @@
+name: VORAX Self-Ping Controller
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Controller action
+        required: true
+        type: choice
+        default: heartbeat
+        options:
+          - heartbeat
+          - start-campaign
+          - stop-campaign
+          - queue-x
+          - start-kaggle
+          - status
+      x:
+        description: X to queue for a Kaggle session (do not include secrets or private data)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+concurrency:
+  group: vorax-self-ping-controller
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted Home
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install optional Kaggle CLI
+        run: python -m pip install --disable-pip-version-check kaggle
+
+      - name: Run controller (pings only; it never runs VORAX on GitHub)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VORAX_KOYEB_URL: ${{ vars.VORAX_KOYEB_URL }}
+          VORAX_HF_CHILD_URL: ${{ vars.VORAX_HF_CHILD_URL }}
+          VORAX_KOYEB_CHILD_API_KEY: ${{ secrets.VORAX_KOYEB_CHILD_API_KEY }}
+          HF_SPACE_TOKEN: ${{ secrets.HF_SPACE_TOKEN }}
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_KERNEL: ${{ secrets.KAGGLE_USERNAME }}/${{ vars.KAGGLE_KERNEL_SLUG }}
+          KAGGLE_KERNEL_SLUG: ${{ vars.KAGGLE_KERNEL_SLUG }}
+          KAGGLE_ACCELERATOR: ${{ vars.KAGGLE_ACCELERATOR || 'NvidiaTeslaT4' }}
+          KAGGLE_TIMEOUT_SECONDS: '42000'
+          VORAX_CONTROLLER_REPORT: controller-report.jsonl
+        run: |
+          MODE='${{ inputs.mode || 'heartbeat' }}'
+          X='${{ inputs.x || '' }}'
+          python scripts/vorax_controller.py --mode "$MODE" --x "$X"
+
+      - name: Upload timestamped controller evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vorax-controller-${{ github.run_id }}
+          path: controller-report.jsonl
+          if-no-files-found: warn
+          retention-days: 30
