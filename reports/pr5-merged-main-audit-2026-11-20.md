@@ -122,3 +122,25 @@ References:
 - `https://huggingface.co/docs/hub/main/en/storage-limits`
 
 The account's subscription tier and remaining storage are not publicly visible in the profile, so this audit does not assume PRO or additional private-storage headroom. Phase 1 therefore prioritizes Kaggle compute plus the HF private Dataset Vault. The separate Docker backup Space and Koyeb service are parked for later; no existing HF resources are overwritten.
+
+
+## Latest Phase 1 branch CI evidence
+
+After binding the Kaggle account and adding the private-HF-Vault guard, the current PR #7 head is `4cb843c7ef92ad53aadb593926d981ccafd65683`. The three associated runs again failed before any job step was assigned:
+
+| Run | Event | Job | Runner ID | Steps | Result |
+|---|---|---|---:|---:|---|
+| `44716214677` | push | `verify` (`136220171717`) | 0 | 0 | failure |
+| `44716224379` | pull_request | `verify` (`136220201939`) | 0 | 0 | failure |
+| `44716220581` | pull_request_target | `verify-and-merge-data` (`136220190528`) | 0 | 0 | failure |
+
+No test or code step ran. This repeats the same runner-allocation failure and does not validate or invalidate the new Vault privacy test. CI is still BLOCKED.
+
+## Phase 1 implementation delta
+
+- Kaggle publish/controller workflows now bind the exact username `musombiwilliam`; only `KAGGLE_KEY` remains a GitHub Actions secret.
+- Free accelerator default is `NvidiaTeslaP100`, matching Kaggle's documented free baseline; other accelerators must be selected only if the account exposes them.
+- The Kaggle Notebook must receive `VORAX_HOME_READ_TOKEN`, `VORAX_HOME_WRITE_TOKEN`, `VORAX_KAGGLE_CHILD_API_KEY`, and `HF_VAULT_TOKEN` as notebook secrets.
+- HF Vault sync now checks the resolved Dataset's `private` flag after repository creation/lookup and fails before upload if the Dataset is public.
+- The HF Docker Space and Koyeb deployment workflows are manual-only and parked. The HF Docker deployment is not part of Phase 1 unless the user confirms account eligibility for PRO compute.
+- The README now prioritizes Kaggle compute plus the HF Dataset Vault, and explicitly protects existing `MVI AI Engine`, `OmniMind`, and `Omnset` resources from accidental overwrite.
