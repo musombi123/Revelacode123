@@ -342,26 +342,19 @@ def main() -> int:
 
     try:
         home_read = kaggle_secret("VORAX_HOME_READ_TOKEN", required=True)
-        home_write = kaggle_secret("VORAX_HOME_WRITE_TOKEN", required=True)
         child_key = kaggle_secret("VORAX_KAGGLE_CHILD_API_KEY", required=True)
-        vault_token = kaggle_secret("HF_VAULT_TOKEN", required=True)
-        hf_read = kaggle_secret("HF_READ_TOKEN")
-        legacy_teacher_key = kaggle_secret("LEGEND_TEACHER_API_KEY")
-        legacy_teacher_model = kaggle_secret("LEGEND_TEACHER_MODEL")
-        legacy_teacher_base = kaggle_secret("LEGEND_TEACHER_BASE_URL")
 
+        # The connector deliberately does not request Home write or Vault credentials.
+        # Runtime alone opens Home PRs and writes to the private Dataset Vault.
         report["secret_use"] = {
             "VORAX_HOME_READ_TOKEN": {"available": True, "used_for": "direct_metadata_index_read_only"},
-            "VORAX_HOME_WRITE_TOKEN": {"available": bool(home_write), "used": False,
-                                       "note": "Runtime owns GitHub proposal submission"},
+            "VORAX_HOME_WRITE_TOKEN": {"requested_by_connector": False, "authority": "Runtime_only"},
             "VORAX_KAGGLE_CHILD_API_KEY": {"available": True, "used_for": "Teacher_and_Runtime_auth"},
-            "HF_VAULT_TOKEN": {"available": bool(vault_token), "used": False,
-                               "note": "Runtime alone writes to Vault"},
-            "HF_READ_TOKEN": {"available": bool(hf_read), "used": False,
-                              "note": "Teacher owns Hub metadata discovery"},
-            "LEGEND_TEACHER_API_KEY": {"available": bool(legacy_teacher_key), "used": False},
-            "LEGEND_TEACHER_MODEL": {"available": bool(legacy_teacher_model), "used": False},
-            "LEGEND_TEACHER_BASE_URL": {"available": bool(legacy_teacher_base), "used": False},
+            "HF_VAULT_TOKEN": {"requested_by_connector": False, "authority": "Runtime_only"},
+            "HF_READ_TOKEN": {"requested_by_connector": False, "authority": "Teacher_only"},
+            "LEGEND_TEACHER_API_KEY": {"requested_by_connector": False, "authority": "Teacher_only"},
+            "LEGEND_TEACHER_MODEL": {"requested_by_connector": False, "authority": "configured_on_Teacher_or_cli"},
+            "LEGEND_TEACHER_BASE_URL": {"requested_by_connector": False, "authority": "Teacher_service_URL"},
         }
 
         teacher_code, teacher_health = request_json(TEACHER_URL, "/health")
