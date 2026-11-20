@@ -76,7 +76,7 @@ jobs:
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           KAGGLE_KERNEL: musombiwilliam/${{ vars.KAGGLE_KERNEL_SLUG || 'revelacode-vorax-child' }}
           KAGGLE_KERNEL_SLUG: ${{ vars.KAGGLE_KERNEL_SLUG || 'revelacode-vorax-child' }}
-          KAGGLE_ACCELERATOR: ${{ vars.KAGGLE_ACCELERATOR || 'NvidiaTeslaT4' }}
+          KAGGLE_ACCELERATOR: ${{ vars.KAGGLE_ACCELERATOR || 'NvidiaTeslaP100' }}
           KAGGLE_TIMEOUT_SECONDS: '42000'
           VORAX_CONTROLLER_REPORT: controller-report.jsonl
           VORAX_RELEASE_REF: ${{ steps.release.outputs.tag }}
