@@ -274,7 +274,7 @@ def main():
                         and answer["gpu_telemetry"].get("gpu_used") is True
                     ):
                         artifact_id = answer.get("artifact")
-                        if not isinstance(artifact_id, str) or not re.fullmatch(r"[a-f0-9]{32}\\.png", artifact_id):
+                        if not isinstance(artifact_id, str) or not re.fullmatch(r"[a-f0-9]{32}\.png", artifact_id):
                             raise RuntimeError("Kaggle GPU returned an invalid artifact identifier")
                         artifact_root = Path(env["LEGEND_ARTIFACT_DIR"]).resolve()
                         artifact_path = (artifact_root / artifact_id).resolve()
