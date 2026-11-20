@@ -243,6 +243,8 @@ class RuntimeServiceTests(unittest.TestCase):
             result = hf_runtime.health()
         self.assertTrue(result["ready"])
         self.assertTrue(result["required_secrets"]["inference_provider_token"])
+        self.assertIs(result["billable_inference_allowed"], False)
+        self.assertIs(result["free_provider_only"], True)
 
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token", "HF_INFERENCE_TOKEN": "remote-inference-token", "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}), \
