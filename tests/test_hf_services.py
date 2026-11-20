@@ -62,7 +62,7 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertNotIn("files", result["models"][0])
         self.assertIn("search=example", call.call_args.args[0])
         self.assertIn("expand%5B%5D=inferenceProviderMapping", call.call_args.args[0])
-        self.assertNotIn("inference_provider=all", call.call_args.args[0])
+        self.assertIn("inference_provider=all", call.call_args.args[0])
 
     def test_ask_uses_remote_router_and_authenticates_child(self):
         response = {"choices": [{"message": {"content": "A bounded teaching response."}}]}
@@ -92,6 +92,17 @@ class TeacherServiceTests(unittest.TestCase):
         )
         self.assertEqual(call.call_args.args[0], hf_teacher.HF_CHAT_API)
         self.assertEqual(log.call_args.kwargs["kaggle_t4_used"], False)
+
+    def test_spaces_and_datasets_are_not_sorted_by_model_download_counts(self):
+        for source in ("spaces", "datasets"):
+            with self.subTest(source=source):
+                with patch.object(hf_teacher, "_http_json", return_value=([], {})) as call:
+                    hf_teacher._discover_kind(source, "capability", 12, "cursor-1")
+                url = call.call_args.args[0]
+                self.assertIn("cursor=cursor-1", url)
+                self.assertIn("search=capability", url)
+                self.assertNotIn("sort=downloads", url)
+                self.assertNotIn("inference_provider=all", url)
 
     def test_discovery_routes_source_specific_cursors(self):
         for source in ("models", "spaces", "datasets"):
