@@ -106,7 +106,7 @@ class TeacherServiceTests(unittest.TestCase):
 
 class RuntimeServiceTests(unittest.TestCase):
     def test_input_x_uses_shared_vlang_runtime_and_requires_child_auth(self):
-        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token", "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}), \
+        with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime", "HF_VAULT_TOKEN": "vault-token", "HF_INFERENCE_TOKEN": "remote-inference-token", "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}), \
              patch.object(hf_runtime, "CHILD_ID", "kaggle-child"), \
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
              patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
@@ -126,6 +126,59 @@ class RuntimeServiceTests(unittest.TestCase):
             self.assertEqual(result["method"], "runtime.identity")
             self.assertIsNone(result["artifact_sha256"])
             self.assertEqual(result["verification"]["authority"], "trusted_vlang_interpreter")
+
+
+    def test_runtime_executes_only_home_approved_vault_reconciled_child_method(self):
+        record = {
+            "version": "vlang/1",
+            "id": "learned.reverse_text",
+            "domain": "text",
+            "task": "reverse a supplied text string",
+            "triggers": ["reverse text sample", "reverse input text"],
+            "inputs": {"text": "string"},
+            "steps": [{"op": "reverse_text", "args": [{"input": "text"}], "as": "answer"}],
+            "result": {"step": "answer"},
+            "tests": [
+                {"input": {"text": "abc"}, "expect": "cba"},
+                {"input": {"text": "vorax"}, "expect": "xarov"},
+            ],
+            "provenance": {"kind": "teacher", "teacher": "remote-teacher", "child_id": "kaggle-child"},
+        }
+        with patch.dict(os.environ, {
+                 "VORAX_CHILD_ROLE": "hf-runtime",
+                 "HF_VAULT_TOKEN": "vault-token",
+                 "HF_INFERENCE_TOKEN": "remote-inference-token",
+                 "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
+             }), \
+             patch.object(hf_runtime, "CHILD_ID", "kaggle-child"), \
+             patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
+             patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
+             patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
+             patch.object(hf_runtime, "_refresh_home_index", return_value=({
+                 "version": "vorax-home-method-index/v1",
+                 "methods_total": 1,
+                 "records": [{
+                     "id": record["id"],
+                     "domain": record["domain"],
+                     "task": record["task"],
+                     "triggers": record["triggers"],
+                     "method_sha256": __import__("hashlib").sha256(dump_record(record).encode()).hexdigest(),
+                 }],
+             }, {"status": "metadata_index_read", "methods_total": 1})), \
+             patch.object(hf_runtime, "_reconcile_home_methods", return_value={
+                 "status": "no_home_merged_pending_methods", "methods_loaded_into_runtime": 1,
+             }), \
+             patch.object(hf_runtime.STORE, "all", return_value=[record]):
+            result = hf_runtime.input_x(
+                {"x": "reverse text sample abc", "child_id": "kaggle-child", "api_key": "child-test-key"},
+                None,
+                None,
+            )
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["method"], record["id"])
+        self.assertEqual(result["answer"], "cba")
+        self.assertIsNone(result["artifact_sha256"])
+        self.assertIs(result["verification"]["home_method_bodies_loaded"], False)
 
     def test_input_x_rejects_unauthenticated_child(self):
         with patch.dict(os.environ, {"VORAX_CHILD_ROLE": "hf-runtime"}), \
