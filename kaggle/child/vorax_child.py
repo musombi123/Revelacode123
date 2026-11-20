@@ -281,7 +281,11 @@ def main() -> int:
     parser.add_argument("--task", default=os.getenv("VORAX_X", ""))
     parser.add_argument("--model-id", default=os.getenv("VORAX_TEACHER_MODEL", ""))
     parser.add_argument("--discovery-query", default="")
+    parser.add_argument("--teacher-count", type=int, default=int(os.getenv("VORAX_TEACHER_COUNT", "3")))
     args = parser.parse_args()
+
+    if args.teacher_count < 1 or args.teacher_count > 5:
+        raise ConnectorError("--teacher-count must be between 1 and 5")
 
     report: dict[str, Any] = {
         "child": CHILD_ID,
