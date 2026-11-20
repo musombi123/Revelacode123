@@ -142,14 +142,16 @@ def generate_image(
     device_index = torch.cuda.current_device()
     gpu_name = torch.cuda.get_device_name(device_index)
     torch.cuda.synchronize(device_index)
+    torch.cuda.reset_peak_memory_stats(device_index)
     memory_before = int(torch.cuda.memory_allocated(device_index))
     started = time.monotonic()
 
     pipeline = _load_pipeline(model_id, torch)
     try:
-        unet_parameter = next(pipeline.unet.parameters())
-        if unet_parameter.device.type != "cuda" or unet_parameter.device.index != device_index:
-            raise KaggleGPUError("Loaded image model is not on the observed Kaggle CUDA device")
+        for component_name in ("unet", "text_encoder", "vae"):
+            parameter = next(getattr(pipeline, component_name).parameters())
+            if parameter.device.type != "cuda" or parameter.device.index != device_index:
+                raise KaggleGPUError(f"Loaded image model {component_name} is not on the observed Kaggle CUDA device")
 
         actual_seed = seed if seed is not None else int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
         generator = torch.Generator(device=f"cuda:{device_index}").manual_seed(actual_seed)
@@ -197,7 +199,10 @@ def generate_image(
         "device": f"cuda:{device_index}",
         "telemetry_source": ["torch.cuda", "nvidia-smi"],
         "cuda_available": True,
-        "model_parameter_device": str(next(pipeline.unet.parameters()).device),
+        "model_parameter_devices": {
+            name: str(next(getattr(pipeline, name).parameters()).device)
+            for name in ("unet", "text_encoder", "vae")
+        },
         "memory_allocated_before_bytes": memory_before,
         "memory_allocated_after_bytes": memory_after,
         "max_memory_reserved_bytes": memory_reserved,
