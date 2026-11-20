@@ -1,8 +1,6 @@
 name: Deploy VORAX Koyeb Lightweight Child
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
