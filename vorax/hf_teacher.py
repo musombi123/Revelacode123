@@ -218,8 +218,6 @@ def _discover_router_models(query: str, limit: int) -> list[dict]:
             "owned_by": str(item.get("owned_by") or ""),
             "tags": ["conversational", "remote-inference"],
             "description": "Listed by the Hugging Face Inference Providers router",
-            "downloads": 0,
-            "likes": 0,
             "pipeline_tag": "conversational",
             "library_name": None,
             "sdk": None,
@@ -244,7 +242,13 @@ def discover(
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             pending = {
-                kind: pool.submit(_discover_kind, kind, query, limit, cursor if kind == "models" else None)
+                kind: pool.submit(
+                    _discover_kind,
+                    kind,
+                    query,
+                    limit,
+                    cursor if source == kind else None,
+                )
                 for kind in kinds
             }
             for kind, future in pending.items():
@@ -332,7 +336,13 @@ def ask(
         raise HTTPException(502, "Remote Inference Provider returned no assistant content") from exc
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(502, "Remote Inference Provider returned empty assistant content")
-    provider = headers.get("x-inference-provider") or headers.get("X-Inference-Provider") or "unknown"
+    provider = headers.get("x-inference-provider") or headers.get("X-Inference-Provider")
+    if not isinstance(provider, str) or not provider.strip():
+        raise HTTPException(502, "Remote response omitted the Inference Provider identity header")
+    provider = provider.strip()
+    requested_provider = model_id.rsplit(":", 1)[1] if ":" in model_id else ""
+    if requested_provider and provider.casefold() != requested_provider.casefold():
+        raise HTTPException(502, "Remote response provider does not match the requested pinned provider")
     request_id = headers.get("x-request-id") or headers.get("X-Request-Id") or None
     attestation = _attest_response(model_id, provider, content, request_id)
     _log(
