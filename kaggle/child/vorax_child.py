@@ -194,30 +194,33 @@ def discover_world(query: str, page_limit: int = 100) -> dict:
 
 
 def choose_teacher_models(models: list[dict], requested: str = "", count: int = 3) -> list[str]:
-    """Select a bounded panel of distinct remote teacher models from metadata."""
+    """Select distinct live remote chat providers from Hub model metadata."""
     if not models:
-        raise ConnectorError("Teacher metadata discovery returned no models to query")
-    preferred = []
+        raise ConnectorError("Teacher metadata discovery returned no remotely served models")
+    provider_choices = []
+    fallback_models = []
     for item in models:
-        pipeline = str(item.get("pipeline_tag") or "").casefold()
-        tags = " ".join(str(x).casefold() for x in item.get("tags", []))
         model_id = str(item.get("id") or "").strip()
-        if model_id and (
-            "text-generation" in pipeline
-            or "text-generation" in tags
-            or "conversational" in pipeline
-            or "instruct" in model_id.casefold()
-        ):
-            preferred.append(model_id)
-    all_ids = list(dict.fromkeys(preferred + [
-        str(item.get("id") or "").strip() for item in models if item.get("id")
-    ]))
+        if not model_id:
+            continue
+        fallback_models.append(model_id)
+        for provider in item.get("providers", []):
+            if not isinstance(provider, dict):
+                continue
+            if str(provider.get("status", "")).casefold() != "live":
+                continue
+            if str(provider.get("task", "")).casefold() not in {"conversational", "text-generation"}:
+                continue
+            provider_id = str(provider.get("provider") or "").strip()
+            if provider_id:
+                provider_choices.append(f"{model_id}:{provider_id}")
+    choices = list(dict.fromkeys(provider_choices + fallback_models))
     selected = []
     if requested.strip():
         selected.append(requested.strip())
-    for model_id in all_ids:
-        if model_id and model_id not in selected:
-            selected.append(model_id)
+    for model_ref in choices:
+        if model_ref and model_ref not in selected:
+            selected.append(model_ref)
         if len(selected) >= count:
             break
     return selected[:count]
