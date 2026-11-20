@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy the two private, weight-free VORAX Hugging Face Docker Spaces.
+"""Deploy the two public, app-authenticated, weight-free VORAX Hugging Face Docker Spaces.
 
 This script never creates or mutates the existing Dataset Vault. It checks the
 Vault read-only before deployment. It does not request GPU hardware or run a
@@ -77,13 +77,13 @@ def inspect_existing_vault(token: str) -> dict:
     return proof
 
 
-def ensure_private_docker_space(api: HfApi, repo_id: str) -> None:
+def ensure_public_docker_space(api: HfApi, repo_id: str) -> None:
     try:
         api.create_repo(
             repo_id=repo_id,
             repo_type="space",
             space_sdk="docker",
-            private=True,
+            private=False,
             exist_ok=True,
         )
         info = api.repo_info(repo_id=repo_id, repo_type="space")
@@ -95,8 +95,8 @@ def ensure_private_docker_space(api: HfApi, repo_id: str) -> None:
             "No paid hardware or alternative resource was requested; deployment stopped."
         ) from exc
 
-    if getattr(info, "private", False) is not True:
-        raise RuntimeError(f"{repo_id} is not private; refusing to upload service code or secrets.")
+    if getattr(info, "private", True) is not False:
+        raise RuntimeError(f"{repo_id} is private; the Kaggle Child cannot call its API without an additional Space-access token. Refusing silent access-policy changes.")
     sdk = getattr(info, "sdk", None)
     if sdk and str(sdk).lower() != "docker":
         raise RuntimeError(f"{repo_id} is an existing {sdk!r} Space, not Docker; refusing to repurpose it.")
@@ -203,8 +203,8 @@ def main() -> int:
     runtime_url = "https://musombi-vorax-runtime-service.hf.space"
 
     api = HfApi(token=env["HF_SPACE_TOKEN"])
-    ensure_private_docker_space(api, TEACHER_REPO)
-    ensure_private_docker_space(api, RUNTIME_REPO)
+    ensure_public_docker_space(api, TEACHER_REPO)
+    ensure_public_docker_space(api, RUNTIME_REPO)
 
     teacher_secrets = {
         "HF_TOKEN": env["HF_TOKEN"],
@@ -241,8 +241,8 @@ def main() -> int:
 
     report = {
         "vault": vault_proof,
-        "teacher": {"repo": TEACHER_REPO, "url": teacher_url, "uploaded": True, "live": False},
-        "runtime": {"repo": RUNTIME_REPO, "url": runtime_url, "uploaded": True, "live": False},
+        "teacher": {"repo": TEACHER_REPO, "url": teacher_url, "access": "public_endpoint_child_auth", "uploaded": True, "live": False},
+        "runtime": {"repo": RUNTIME_REPO, "url": runtime_url, "access": "public_endpoint_child_auth", "uploaded": True, "live": False},
         "weights_in_space_payloads": 0,
         "paid_hardware_requested": False,
         "go_no_go": "BLOCKED",
