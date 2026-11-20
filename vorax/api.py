@@ -395,6 +395,8 @@ def tool_execute(body: dict, request: Request):
     # No request URL, arbitrary model ID, code string execution, or caller credentials.
     role=os.getenv("VORAX_CHILD_ROLE","").strip().lower()
     media_tools={"image.generate","audio.tts","audio.transcribe","video.generate","music.generate"}
+    if role=="koyeb" and name in media_tools:
+        raise HTTPException(409,"Koyeb does not execute media tools directly; submit Input X for Kaggle routing")
     if role=="kaggle" and name in media_tools:
         provider="kaggle-gpu"
     elif provider=="kaggle-gpu":
