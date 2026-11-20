@@ -197,7 +197,7 @@ def generate_image(
         "gpu_used": True,
         "gpu_name": gpu_name,
         "device": f"cuda:{device_index}",
-        "telemetry_source": ["torch.cuda", "nvidia-smi"],
+        "telemetry_source": ["torch.cuda"] + (["nvidia-smi"] if smi.get("available") else []),
         "cuda_available": True,
         "model_parameter_devices": {
             name: str(next(getattr(pipeline, name).parameters()).device)
