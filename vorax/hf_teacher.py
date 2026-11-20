@@ -256,7 +256,7 @@ def discover(
 
     models = list(found.get("models", []))
     resources = [item for kind in kinds for item in found.get(kind, [])]
-    router_models = _discover_router_models(query, limit) if "models" in kinds else []
+    router_models = _discover_router_models(query, limit) if "models" in kinds and cursor is None else []
     by_id = {item["id"]: item for item in models if isinstance(item, dict) and item.get("id")}
     for model in router_models:
         existing = by_id.get(model["id"])
@@ -269,7 +269,7 @@ def discover(
     return {
         "status": "metadata_only",
         "query": query,
-        "sources_searched": [*kinds, "inference_provider_router"],
+        "sources_searched": [*kinds, *([ "inference_provider_router" ] if "models" in kinds and cursor is None else [])],
         "models": models,
         "router_models": router_models,
         "resources": resources,
