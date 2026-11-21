@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import wave
 from pathlib import Path
@@ -592,4 +593,466 @@ def promote_pending_home_methods(home_index: dict, *, merged_pr_verifier=None) -
         "home_index_methods": len(home_by_id),
         "repo_type": "dataset",
         "vault_repo": repo,
+    }
+
+
+# Weekly records are Runtime-owned; Kaggle Children receive no Vault credential.
+_WEEKLY_VAULT_LOCK = threading.RLock()
+_WEEKLY_CYCLE_RE = re.compile(r"^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$")
+
+
+def _weekly_json_bytes(value: dict) -> bytes:
+    if not isinstance(value, dict):
+        raise VaultError("Weekly Vault records must be JSON objects")
+    return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def _write_weekly_document(path: str, value: dict, *, allow_update: bool = False) -> dict:
+    if not path.startswith("reports/weekly/") or ".." in path.split("/"):
+        raise VaultError("Weekly report path is outside the reports/weekly namespace")
+    raw = _weekly_json_bytes(value)
+    digest = hashlib.sha256(raw).hexdigest()
+    api, repo = _client()
+    existing_files = set(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    if path in existing_files:
+        existing = _read_file(api, repo, path)
+        existing_digest = hashlib.sha256(existing).hexdigest()
+        if existing_digest != digest:
+            if not allow_update:
+                raise VaultError("Weekly record already exists with different content; refusing to overwrite")
+            _upload(api, repo, path, raw, "Runtime update VORAX weekly knowledge-growth record")
+    else:
+        _upload(api, repo, path, raw, "Runtime write VORAX weekly knowledge-growth record")
+
+    # Repair/update the checksum even when the file already existed with identical bytes.
+    checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    checksums = checksum_doc.get("files", {})
+    if not isinstance(checksums, dict):
+        raise VaultError("Vault checksum manifest has an invalid files field")
+    if checksums.get(path) != digest:
+        checksums[path] = digest
+        checksum_raw = json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8")
+        _upload(api, repo, "manifest/checksums.json", checksum_raw, "Update weekly VORAX report checksums")
+    return {
+        "status": "already_stored" if path in existing_files and existing_digest == digest else "stored",
+        "path": path,
+        "sha256": digest,
+    }
+
+
+def read_weekly_cycle_manifest(cycle_id: str) -> dict | None:
+    if not isinstance(cycle_id, str) or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id):
+        raise VaultError("Invalid weekly cycle ID")
+    api, repo = _client()
+    path = f"reports/weekly/manifests/{cycle_id}.json"
+    try:
+        value = json.loads(_read_file(api, repo, path).decode("utf-8"))
+    except VaultError as exc:
+        if "EntryNotFound" in str(exc) or "404" in str(exc):
+            return None
+        raise
+    if not isinstance(value, dict) or value.get("cycle_id") != cycle_id:
+        raise VaultError("Weekly cycle manifest failed its identity check")
+    return value
+
+
+def write_weekly_cycle_manifest(manifest: dict) -> dict:
+    cycle_id = manifest.get("cycle_id") if isinstance(manifest, dict) else None
+    if not isinstance(cycle_id, str) or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id):
+        raise VaultError("Invalid weekly cycle manifest ID")
+    path = f"reports/weekly/manifests/{cycle_id}.json"
+    with _WEEKLY_VAULT_LOCK:
+        existing = read_weekly_cycle_manifest(cycle_id)
+        if existing:
+            for field in ("version", "cycle_id", "created_at"):
+                if existing.get(field) != manifest.get(field):
+                    raise VaultError("Weekly cycle manifest immutable fields changed")
+            old_assignments = existing.get("hunter_assignments", [])
+            new_assignments = manifest.get("hunter_assignments", [])
+            identity = lambda rows: [
+                (item.get("hunter_id"), item.get("discovery_slice"))
+                for item in rows if isinstance(item, dict)
+            ]
+            if identity(old_assignments) != identity(new_assignments):
+                raise VaultError("Weekly hunter assignment identities cannot be changed")
+        return _write_weekly_document(path, manifest, allow_update=True)
+
+
+def write_weekly_hunter_report(report: dict) -> dict:
+    cycle_id = report.get("cycle_id") if isinstance(report, dict) else None
+    hunter_id = report.get("hunter_id") if isinstance(report, dict) else None
+    attempt = report.get("attempt", 0) if isinstance(report, dict) else 0
+    if (
+        not isinstance(cycle_id, str)
+        or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id)
+        or not isinstance(hunter_id, str)
+        or not re.fullmatch(r"hunter-[1-3]", hunter_id)
+        or isinstance(attempt, bool)
+        or not isinstance(attempt, int)
+        or attempt not in (0, 1)
+    ):
+        raise VaultError("Weekly hunter report identity or attempt is invalid")
+    return _write_weekly_document(
+        f"reports/weekly/hunters/{cycle_id}/{hunter_id}-attempt-{attempt}.json",
+        report,
+        allow_update=False,
+    )
+
+
+def read_weekly_hunter_report(cycle_id: str, hunter_id: str, attempt: int = 0) -> dict | None:
+    if (
+        not isinstance(cycle_id, str)
+        or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id)
+        or not isinstance(hunter_id, str)
+        or not re.fullmatch(r"hunter-[1-3]", hunter_id)
+        or isinstance(attempt, bool)
+        or not isinstance(attempt, int)
+        or attempt not in (0, 1)
+    ):
+        raise VaultError("Weekly hunter report identity or attempt is invalid")
+    api, repo = _client()
+    path = f"reports/weekly/hunters/{cycle_id}/{hunter_id}-attempt-{attempt}.json"
+    try:
+        value = json.loads(_read_file(api, repo, path).decode("utf-8"))
+    except VaultError as exc:
+        if "EntryNotFound" in str(exc) or "404" in str(exc):
+            return None
+        raise
+    if (
+        not isinstance(value, dict)
+        or value.get("cycle_id") != cycle_id
+        or value.get("hunter_id") != hunter_id
+        or value.get("attempt", 0) != attempt
+    ):
+        raise VaultError("Weekly hunter report failed its identity check")
+    return value
+
+
+def read_weekly_report(cycle_id: str) -> dict | None:
+    if not isinstance(cycle_id, str) or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id):
+        raise VaultError("Weekly report cycle ID is invalid")
+    api, repo = _client()
+    try:
+        value = json.loads(_read_file(api, repo, f"reports/weekly/{cycle_id}.json").decode("utf-8"))
+    except VaultError as exc:
+        if "EntryNotFound" in str(exc) or "404" in str(exc):
+            return None
+        raise
+    if not isinstance(value, dict) or value.get("cycle_id") != cycle_id:
+        raise VaultError("Weekly report failed its cycle identity check")
+    return value
+
+
+def write_weekly_report(report: dict) -> dict:
+    cycle_id = report.get("cycle_id") if isinstance(report, dict) else None
+    if not isinstance(cycle_id, str) or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id):
+        raise VaultError("Weekly report cycle ID is invalid")
+    return _write_weekly_document(f"reports/weekly/{cycle_id}.json", report, allow_update=False)
+
+
+def claim_weekly_proposal_digest(method_sha: str, cycle_id: str, hunter_id: str) -> dict:
+    """Persistent Runtime-only dedup claim keyed by method SHA-256 and ISO week."""
+    if not isinstance(method_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", method_sha):
+        raise VaultError("Proposal method SHA-256 is invalid")
+    if not isinstance(cycle_id, str) or not _WEEKLY_CYCLE_RE.fullmatch(cycle_id):
+        raise VaultError("Proposal cycle ID is invalid")
+    if not isinstance(hunter_id, str) or not re.fullmatch(r"hunter-[1-3]", hunter_id):
+        raise VaultError("Proposal hunter ID is invalid")
+    key = method_sha + ":" + cycle_id
+    path = "reports/weekly/proposal-dedup.json"
+    with _WEEKLY_VAULT_LOCK:
+        api, repo = _client()
+        ledger = _read_json(api, repo, path, {"version": "vorax-proposal-dedup/v1", "claims": {}})
+        claims = ledger.get("claims")
+        if not isinstance(claims, dict):
+            raise VaultError("Weekly proposal dedup ledger is malformed")
+        existing = claims.get(key)
+        if isinstance(existing, dict):
+            first_hunter = existing.get("hunter_id")
+            if first_hunter == hunter_id:
+                return {"claimed": True, "duplicate": False, "idempotent_retry": True}
+            return {
+                "claimed": False,
+                "duplicate": True,
+                "idempotent_retry": False,
+                "first_hunter_id": first_hunter,
+            }
+        claims[key] = {
+            "method_sha256": method_sha,
+            "cycle_id": cycle_id,
+            "hunter_id": hunter_id,
+            "claimed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        ledger["claims"] = claims
+        raw = _weekly_json_bytes(ledger)
+        _upload(api, repo, path, raw, "Runtime deduplicate VORAX weekly proposals by SHA-256")
+        checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+        checksums = checksum_doc.get("files", {})
+        if not isinstance(checksums, dict):
+            raise VaultError("Vault checksum manifest has an invalid files field")
+        checksums[path] = hashlib.sha256(raw).hexdigest()
+        checksum_raw = json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8")
+        _upload(api, repo, "manifest/checksums.json", checksum_raw, "Update weekly VORAX proposal-dedup checksum")
+        return {"claimed": True, "duplicate": False, "idempotent_retry": False}
+
+
+
+def pending_home_proposals(limit: int = 10) -> list[dict]:
+    """Return bounded, independently revalidated Vault-pending methods lacking a Home PR."""
+    from .vlang import dump_record, parse_document, validate_template
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 25:
+        raise VaultError("Pending Home proposal limit must be between 1 and 25")
+    api, repo = _client()
+    pending = _read_json(api, repo, "vlang/pending/index.json", {"version": "vlang-index/1", "records": []})
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    proposals = []
+    for entry in records:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("home_pr") or entry.get("home_commit"):
+            continue
+        method_id = entry.get("id")
+        path = entry.get("path") or f"vlang/pending/{method_id}.vlang"
+        try:
+            raw = _read_file(api, repo, path)
+            parsed = parse_document(raw.decode("utf-8"))
+            if len(parsed) != 1 or parsed[0].get("id") != method_id:
+                raise VaultError("Pending method content does not match its Vault index ID")
+            record = parsed[0]
+            validate_template(record, run_tests=True)
+            canonical = dump_record(record).encode("utf-8")
+            digest = hashlib.sha256(canonical).hexdigest()
+            if digest != entry.get("sha256") or hashlib.sha256(raw).hexdigest() != digest:
+                raise VaultError("Pending method checksum failed Runtime revalidation")
+            proposals.append({
+                "record": record,
+                "child_id": entry.get("child_id"),
+                "method_sha256": digest,
+                "status": entry.get("status"),
+            })
+        except VaultError:
+            raise
+        except Exception as exc:
+            raise VaultError("Pending Vault method failed revalidation: " + type(exc).__name__) from exc
+        if len(proposals) >= limit:
+            break
+    return proposals
+
+
+
+def write_home_metadata_cache(index: dict) -> dict:
+    """Persist only the public Home method metadata index for Runtime offline fallback."""
+    from .home_index import parse_method_index
+
+    try:
+        validated = parse_method_index(json.dumps(index, ensure_ascii=False))
+    except Exception as exc:
+        raise VaultError("Home metadata index failed validation before Vault caching") from exc
+    api, repo = _client()
+    current = _read_json(api, repo, "cache/home-method-index.json", {})
+    if (
+        isinstance(current, dict)
+        and current.get("version") == "vorax-home-metadata-cache/v1"
+        and current.get("method_bodies_included") is False
+        and current.get("index") == validated
+    ):
+        raw_current = _read_file(api, repo, "cache/home-method-index.json")
+        digest_current = hashlib.sha256(raw_current).hexdigest()
+        return {
+            "status": "unchanged",
+            "sha256": digest_current,
+            "methods_total": validated["methods_total"],
+        }
+
+    cache = {
+        "version": "vorax-home-metadata-cache/v1",
+        "cached_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "index": validated,
+        "method_bodies_included": False,
+    }
+    raw = json.dumps(cache, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    _upload(api, repo, "cache/home-method-index.json", raw, "Runtime cache Home metadata-only index")
+    checksum_doc = _read_json(api, repo, "manifest/checksums.json", {"version": "sha256/v1", "files": {}})
+    checksums = checksum_doc.get("files", {})
+    if not isinstance(checksums, dict):
+        raise VaultError("Vault checksum manifest has an invalid files field")
+    checksums["cache/home-method-index.json"] = digest
+    _upload(
+        api, repo, "manifest/checksums.json",
+        json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8"),
+        "Update checksum for cached Home metadata-only index",
+    )
+    return {"status": "cached", "sha256": digest, "methods_total": validated["methods_total"]}
+
+
+def read_home_metadata_cache() -> dict | None:
+    """Read only the previously Runtime-cached metadata index; never method bodies."""
+    from .home_index import parse_method_index
+
+    api, repo = _client()
+    try:
+        cache = _read_json(api, repo, "cache/home-method-index.json", {})
+    except VaultError as exc:
+        if "EntryNotFound" in str(exc) or "404" in str(exc):
+            return None
+        raise
+    if (
+        not isinstance(cache, dict)
+        or cache.get("version") != "vorax-home-metadata-cache/v1"
+        or cache.get("method_bodies_included") is not False
+    ):
+        raise VaultError("Cached Home metadata record failed its trust markers")
+    try:
+        return parse_method_index(json.dumps(cache.get("index"), ensure_ascii=False))
+    except Exception as exc:
+        raise VaultError("Cached Home metadata index failed validation") from exc
+
+
+
+def pending_method_ids() -> set[str]:
+    """Return IDs only; never expose pending method bodies to Kaggle Children."""
+    api, repo = _client()
+    pending = _read_json(api, repo, "vlang/pending/index.json", {"version": "vlang-index/1", "records": []})
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    result = set()
+    for entry in records:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            result.add(entry["id"])
+    return result
+
+
+
+def list_weekly_cycle_manifests(limit: int = 500) -> list[dict]:
+    """Runtime-only bounded scan of weekly cycle manifests in the existing Vault."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise VaultError("Weekly manifest scan limit must be between 1 and 1000")
+    api, repo = _client()
+    try:
+        paths = list(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    except Exception as exc:
+        raise VaultError("Runtime could not list weekly manifests in the private Vault") from exc
+    manifest_paths = sorted(
+        (
+            path for path in paths
+            if isinstance(path, str)
+            and re.fullmatch(r"reports/weekly/manifests/\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])\.json", path)
+        ),
+        reverse=True,
+    )[:limit]
+    manifests = []
+    for path in manifest_paths:
+        try:
+            value = json.loads(_read_file(api, repo, path).decode("utf-8"))
+        except Exception as exc:
+            raise VaultError("Runtime found a weekly manifest it could not read") from exc
+        if not isinstance(value, dict) or not isinstance(value.get("cycle_id"), str):
+            raise VaultError("Weekly manifest failed its identity schema")
+        expected = f"reports/weekly/manifests/{value['cycle_id']}.json"
+        if expected != path or not re.fullmatch(r"\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])", value["cycle_id"]):
+            raise VaultError("Weekly manifest path does not match its cycle ID")
+        manifests.append(value)
+    return manifests
+
+
+
+def pending_method_coverage() -> list[dict]:
+    """Return metadata-only pending coverage so weekly task selection skips equivalent work."""
+    api, repo = _client()
+    pending = _read_json(
+        api,
+        repo,
+        "vlang/pending/index.json",
+        {"version": "vlang-index/1", "records": []},
+    )
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    coverage = []
+    for entry in records:
+        if not isinstance(entry, dict):
+            continue
+        method_id = entry.get("id")
+        domain = entry.get("domain")
+        task = entry.get("task")
+        triggers = entry.get("triggers", [])
+        if (
+            not isinstance(method_id, str)
+            or not isinstance(domain, str)
+            or not isinstance(task, str)
+            or not isinstance(triggers, list)
+            or any(not isinstance(value, str) for value in triggers)
+        ):
+            raise VaultError("Vault pending method metadata is malformed")
+        coverage.append({
+            "id": method_id,
+            "domain": domain,
+            "task": task,
+            "triggers": list(triggers),
+        })
+    return coverage
+
+
+def pending_method_by_sha256(method_sha: str) -> dict | None:
+    """Read, execute and checksum one exact Runtime-pending method by canonical SHA-256."""
+    from .vlang import dump_record, parse_document, validate_template
+
+    if not isinstance(method_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", method_sha):
+        raise VaultError("Pending method lookup requires a lowercase SHA-256 digest")
+    api, repo = _client()
+    pending = _read_json(
+        api,
+        repo,
+        "vlang/pending/index.json",
+        {"version": "vlang-index/1", "records": []},
+    )
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    entry = next(
+        (
+            item for item in records
+            if isinstance(item, dict) and item.get("sha256") == method_sha
+        ),
+        None,
+    )
+    if entry is None:
+        return None
+    method_id = entry.get("id")
+    path = entry.get("path") or f"vlang/pending/{method_id}.vlang"
+    if (
+        not isinstance(method_id, str)
+        or not isinstance(path, str)
+        or not path.startswith("vlang/pending/")
+        or ".." in path.split("/")
+    ):
+        raise VaultError("Pending method index path or identity is invalid")
+    try:
+        raw = _read_file(api, repo, path)
+        parsed = parse_document(raw.decode("utf-8"))
+        if len(parsed) != 1 or parsed[0].get("id") != method_id:
+            raise VaultError("Pending method content does not match its Vault index identity")
+        record = parsed[0]
+        validate_template(record, run_tests=True)
+        canonical = dump_record(record).encode("utf-8")
+    except VaultError:
+        raise
+    except Exception as exc:
+        raise VaultError("Pending method failed trusted V-Lang revalidation") from exc
+    if (
+        hashlib.sha256(raw).hexdigest() != method_sha
+        or hashlib.sha256(canonical).hexdigest() != method_sha
+        or entry.get("sha256") != method_sha
+    ):
+        raise VaultError("Pending method canonical SHA-256 does not match its Vault index")
+    return {
+        "record": record,
+        "entry": dict(entry),
+        "path": path,
+        "method_sha256": method_sha,
     }

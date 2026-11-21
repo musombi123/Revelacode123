@@ -13,6 +13,7 @@ import urllib.request
 
 from .vlang import dump_record
 from .home_index import append_method, parse_method_index
+from .network import NetworkError, request_json
 
 
 class GitHubHomeError(RuntimeError):
@@ -27,26 +28,20 @@ def _api(method, path, token=None, body=None):
     }
     if token:
         headers["Authorization"] = "Bearer " + token
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(
-        "https://api.github.com" + path,
-        data=data,
-        headers=headers,
-        method=method,
-    )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read()
-            return json.loads(raw.decode("utf-8")) if raw else {}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read(2048).decode("utf-8", "replace")
-        raise GitHubHomeError(
-            f"GitHub API {method} failed ({exc.code}): {detail[:400]}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise GitHubHomeError("GitHub API unavailable: " + type(exc).__name__) from exc
+        return request_json(
+            "https://api.github.com" + path,
+            method=method,
+            payload=body,
+            headers=headers,
+            timeout=30,
+            attempts=3,
+        )
+    except NetworkError as exc:
+        message = str(exc)
+        match = re.search(r"HTTP (\d{3})", message)
+        status = match.group(1) if match else "network"
+        raise GitHubHomeError(f"GitHub API {method} failed ({status})") from exc
 
 
 def fetch_method_index(repo: str, branch: str = "main", token: str = "") -> dict:
@@ -291,3 +286,267 @@ def is_merged_home_pull_request(
         and isinstance(pr.get("merge_commit_sha"), str)
         and re.fullmatch(r"[0-9a-f]{40}", pr["merge_commit_sha"]) is not None
     )
+
+
+
+def create_home_report_pull_request(
+    repo: str,
+    base_branch: str,
+    report: dict,
+    token: str,
+) -> dict:
+    """Create or reuse one deterministic report-only Home PR; never write the base branch."""
+    if not token:
+        raise GitHubHomeError("VORAX_HOME_WRITE_TOKEN is not configured on this Runtime")
+    cycle_id = report.get("cycle_id") if isinstance(report, dict) else None
+    if not isinstance(cycle_id, str) or not re.fullmatch(r"\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])", cycle_id):
+        raise GitHubHomeError("Weekly report has an invalid ISO cycle ID")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError("Invalid Home repository")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,100}", base_branch) or ".." in base_branch.split("/"):
+        raise ValueError("Invalid Home base branch")
+
+    raw_text = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    report_sha = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    report_path = f"reports/weekly/{cycle_id}.json"
+    title = f"VORAX weekly knowledge report: {cycle_id}"
+    proposal_branch = f"vorax/weekly-reports/{cycle_id.lower()}-{report_sha[:12]}"
+    encoded_base = urllib.parse.quote(base_branch, safe="")
+    report_ref = f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(proposal_branch, safe='/')}"
+    quoted_path = urllib.parse.quote(report_path, safe="/")
+
+    ref = _api("GET", f"/repos/{repo}/git/ref/heads/{encoded_base}", token)
+    base_sha = ref.get("object", {}).get("sha")
+    if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise GitHubHomeError("GitHub returned an invalid Home base commit")
+    base_commit = _api("GET", f"/repos/{repo}/git/commits/{base_sha}", token)
+    base_tree = base_commit.get("tree", {}).get("sha")
+    if not isinstance(base_tree, str) or not base_tree:
+        raise GitHubHomeError("GitHub returned an invalid Home Git tree")
+
+    def _read_report_at(commit_sha: str) -> str | None:
+        try:
+            item = _api(
+                "GET",
+                f"/repos/{repo}/contents/{quoted_path}?ref={urllib.parse.quote(commit_sha, safe='')}",
+                token,
+            )
+        except GitHubHomeError as exc:
+            if "(404)" in str(exc):
+                return None
+            raise
+        if item.get("encoding") != "base64":
+            raise GitHubHomeError("Home weekly report content is not base64")
+        try:
+            return base64.b64decode(item.get("content", ""), validate=False).decode("utf-8")
+        except Exception as exc:
+            raise GitHubHomeError("Home weekly report is not valid UTF-8") from exc
+
+    base_report = _read_report_at(base_sha)
+    if base_report is not None:
+        if hashlib.sha256(base_report.encode("utf-8")).hexdigest() == report_sha:
+            return {
+                "status": "already_in_home",
+                "cycle_id": cycle_id,
+                "report_sha256": report_sha,
+                "file": report_path,
+                "home_authority": "existing_base_branch_report",
+            }
+        raise GitHubHomeError("Home already contains a different weekly report; refusing to overwrite it")
+
+    head_filter = urllib.parse.quote(repo.split("/")[0] + ":" + proposal_branch, safe=":")
+    all_prs = _api(
+        "GET",
+        f"/repos/{repo}/pulls?state=all&head={head_filter}&base={urllib.parse.quote(base_branch, safe='')}",
+        token,
+    )
+    if not isinstance(all_prs, list):
+        raise GitHubHomeError("GitHub returned an invalid weekly report PR listing")
+    for item in all_prs:
+        number = item.get("number")
+        if not isinstance(number, int):
+            continue
+        existing_pr = _api("GET", f"/repos/{repo}/pulls/{number}", token)
+        body_text = existing_pr.get("body") or ""
+        head = existing_pr.get("head") if isinstance(existing_pr.get("head"), dict) else {}
+        base = existing_pr.get("base") if isinstance(existing_pr.get("base"), dict) else {}
+        if (
+            head.get("ref") != proposal_branch
+            or base.get("ref") != base_branch
+            or f"Report SHA-256: {report_sha}" not in body_text
+        ):
+            continue
+        if existing_pr.get("merged") is True or existing_pr.get("merged_at"):
+            return {
+                "status": "already_in_home",
+                "cycle_id": cycle_id,
+                "pr_number": number,
+                "pr_url": existing_pr.get("html_url"),
+                "report_sha256": report_sha,
+                "file": report_path,
+                "home_authority": "merged_report_pull_request",
+            }
+        if existing_pr.get("state") == "closed":
+            existing_pr = _api(
+                "PATCH",
+                f"/repos/{repo}/pulls/{number}",
+                token,
+                {"state": "open"},
+            )
+        return {
+            "status": "submitted_for_home_review",
+            "cycle_id": cycle_id,
+            "pr_number": number,
+            "pr_url": existing_pr.get("html_url"),
+            "branch": proposal_branch,
+            "proposal_commit_sha": existing_pr.get("head", {}).get("sha"),
+            "report_sha256": report_sha,
+            "file": report_path,
+            "home_authority": "pull_request_review_and_merge_required",
+            "reused": True,
+        }
+
+    def _create_report_commit() -> str:
+        tree = _api("POST", f"/repos/{repo}/git/trees", token, {
+            "base_tree": base_tree,
+            "tree": [{
+                "path": report_path,
+                "mode": "100644",
+                "type": "blob",
+                "content": raw_text,
+            }],
+        })
+        tree_sha = tree.get("sha")
+        if not isinstance(tree_sha, str) or not tree_sha:
+            raise GitHubHomeError("GitHub did not create the weekly report tree")
+        commit = _api("POST", f"/repos/{repo}/git/commits", token, {
+            "message": f"vorax: weekly knowledge-growth report {cycle_id}",
+            "tree": tree_sha,
+            "parents": [base_sha],
+        })
+        commit_sha = commit.get("sha")
+        if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+            raise GitHubHomeError("GitHub did not create the weekly report commit")
+        updated_ref = _api(
+            "PATCH",
+            report_ref,
+            token,
+            {"sha": commit_sha, "force": False},
+        )
+        if updated_ref.get("object", {}).get("sha") != commit_sha:
+            raise GitHubHomeError("GitHub did not confirm the weekly report proposal branch")
+        return commit_sha
+
+    # A previous Runtime attempt can have created the branch but lost a response
+    # before creating its commit or PR. Verify and resume that exact branch.
+    existing_branch = None
+    try:
+        existing_branch = _api("GET", report_ref, token)
+    except GitHubHomeError as exc:
+        if "(404)" not in str(exc):
+            raise
+    if existing_branch:
+        branch_sha = existing_branch.get("object", {}).get("sha")
+        if not isinstance(branch_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", branch_sha):
+            raise GitHubHomeError("Existing weekly report branch has an invalid commit")
+        branch_report = _read_report_at(branch_sha)
+        if branch_report is not None:
+            if hashlib.sha256(branch_report.encode("utf-8")).hexdigest() != report_sha:
+                raise GitHubHomeError("Existing weekly report branch contains different report bytes")
+            commit_sha = branch_sha
+        elif branch_sha == base_sha:
+            # The prior attempt created the branch at base but stopped before its commit.
+            commit_sha = _create_report_commit()
+        else:
+            raise GitHubHomeError("Existing report branch is not the expected base or report commit")
+    else:
+        try:
+            _api(
+                "POST",
+                f"/repos/{repo}/git/refs",
+                token,
+                {"ref": "refs/heads/" + proposal_branch, "sha": base_sha},
+            )
+        except GitHubHomeError:
+            # A concurrent retry may have created the deterministic branch first.
+            existing_branch = _api("GET", report_ref, token)
+            branch_sha = existing_branch.get("object", {}).get("sha")
+            if branch_sha != base_sha:
+                branch_report = _read_report_at(branch_sha)
+                if branch_report is None or hashlib.sha256(branch_report.encode("utf-8")).hexdigest() != report_sha:
+                    raise GitHubHomeError("Concurrent weekly report branch does not match the expected report")
+                commit_sha = branch_sha
+            else:
+                commit_sha = _create_report_commit()
+        else:
+            commit_sha = _create_report_commit()
+
+    body_text = (
+        "## VORAX weekly knowledge-growth report\n\n"
+        f"- Cycle: {cycle_id}\n"
+        f"- Report SHA-256: {report_sha}\n"
+        "- Report was written by the trusted Runtime after hunter report validation.\n"
+        "- This is an isolated report-only branch; Home base is not modified directly.\n"
+        "- Merge only after the required trusted CI checks and human review succeed."
+    )
+    try:
+        pr = _api("POST", f"/repos/{repo}/pulls", token, {
+            "title": title,
+            "head": proposal_branch,
+            "base": base_branch,
+            "body": body_text,
+        })
+    except GitHubHomeError:
+        # POST may have succeeded while the response was lost. Look up and reuse it.
+        refreshed = _api(
+            "GET",
+            f"/repos/{repo}/pulls?state=all&head={head_filter}&base={urllib.parse.quote(base_branch, safe='')}",
+            token,
+        )
+        for item in refreshed if isinstance(refreshed, list) else []:
+            number = item.get("number")
+            if not isinstance(number, int):
+                continue
+            existing_pr = _api("GET", f"/repos/{repo}/pulls/{number}", token)
+            if (
+                existing_pr.get("head", {}).get("ref") == proposal_branch
+                and existing_pr.get("base", {}).get("ref") == base_branch
+                and f"Report SHA-256: {report_sha}" in (existing_pr.get("body") or "")
+            ):
+                if existing_pr.get("state") == "closed" and not existing_pr.get("merged"):
+                    existing_pr = _api(
+                        "PATCH",
+                        f"/repos/{repo}/pulls/{number}",
+                        token,
+                        {"state": "open"},
+                    )
+                return {
+                    "status": "submitted_for_home_review",
+                    "cycle_id": cycle_id,
+                    "pr_number": number,
+                    "pr_url": existing_pr.get("html_url"),
+                    "branch": proposal_branch,
+                    "proposal_commit_sha": commit_sha,
+                    "report_sha256": report_sha,
+                    "file": report_path,
+                    "home_authority": "pull_request_review_and_merge_required",
+                    "reused": True,
+                }
+        raise
+
+    pr_number = pr.get("number")
+    pr_url = pr.get("html_url")
+    if not isinstance(pr_number, int) or not isinstance(pr_url, str) or not pr_url:
+        raise GitHubHomeError("GitHub did not return a valid weekly report PR receipt")
+    return {
+        "status": "submitted_for_home_review",
+        "cycle_id": cycle_id,
+        "pr_number": pr_number,
+        "pr_url": pr_url,
+        "branch": proposal_branch,
+        "proposal_commit_sha": commit_sha,
+        "report_sha256": report_sha,
+        "file": report_path,
+        "home_authority": "pull_request_review_and_merge_required",
+        "reused": False,
+    }
