@@ -136,7 +136,7 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn("DEPLOYMENT_STAGE", source)
         self.assertIn("def set_deployment_stage", source)
         self.assertIn("def http_error_summary", source)
-        self.assertIn("response.status_code", source)
+        self.assertIn('getattr(response, "status_code", None)', source)
         self.assertIn("parsed.path", source)
         self.assertIn("[REDACTED_HF_TOKEN]", source)
         self.assertIn("Teacher metadata discovery smoke test", source)
