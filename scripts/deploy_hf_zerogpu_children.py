@@ -24,6 +24,8 @@ from huggingface_hub import HfApi
 from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 OWNER = "Musombi"
 TEACHER_REPO = f"{OWNER}/vorax-teacher-service"
 RUNTIME_REPO = f"{OWNER}/vorax-runtime-service"
