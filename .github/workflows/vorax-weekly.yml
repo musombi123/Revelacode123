@@ -1,0 +1,40 @@
+name: VORAX Weekly Knowledge-Growth Cycle
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: vorax-weekly-cycle-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  coordinate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout trusted VORAX coordinator
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Kaggle command-line client
+        run: python -m pip install --disable-pip-version-check "kaggle>=1.8.0"
+
+      - name: Coordinate weekly cycle and Hunter Mesh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VORAX_RUNTIME_URL: ${{ vars.VORAX_RUNTIME_URL || 'https://musombi-vorax-runtime-service.hf.space' }}
+          VORAX_KAGGLE_CHILD_API_KEY: ${{ secrets.VORAX_KAGGLE_CHILD_API_KEY }}
+          KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: python scripts/vorax_weekly_coordinator.py

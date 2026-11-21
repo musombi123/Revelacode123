@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
+from .network import CircuitBreaker, NetworkError, PeerHealthMonitor, request_json
 
 LOGGER = logging.getLogger("vorax.teacher-service")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -24,12 +25,25 @@ HF_CHAT_API = "https://router.huggingface.co/v1/chat/completions"
 HF_ROUTER_MODELS_API = "https://router.huggingface.co/v1/models"
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$")
 MAX_PROMPT_CHARS = 12_000
+HF_PROVIDER_BREAKER = CircuitBreaker()
 
 app = FastAPI(
     title="VORAX Teacher Service",
     version="1.0.0",
     description="Remote Hugging Face Inference Providers gateway; no local model weights.",
 )
+
+
+RUNTIME_URL = os.getenv(
+    "VORAX_RUNTIME_URL",
+    "https://musombi-vorax-runtime-service.hf.space",
+).rstrip("/")
+RUNTIME_MONITOR = PeerHealthMonitor(RUNTIME_URL + "/health", "runtime", interval_seconds=60)
+
+
+@app.on_event("startup")
+def start_runtime_peer_monitor():
+    RUNTIME_MONITOR.start()
 
 
 class TeacherAsk(BaseModel):
@@ -56,35 +70,31 @@ def _authenticate_child(child_id: str | None, child_key: str | None) -> str:
 
 
 def _http_json(url: str, *, token: str = "", body: dict | None = None, timeout: int = 25):
-    headers = {"Accept": "application/json", "User-Agent": "VORAX-Teacher-Service/1.0"}
-    data = None
-    method = "GET"
+    headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
-    if body is not None:
-        method = "POST"
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read(2 * 1024 * 1024 + 1)
-            if len(raw) > 2 * 1024 * 1024:
-                raise HTTPException(502, "Hugging Face response exceeded the metadata/response limit")
-            return json.loads(raw.decode("utf-8")), dict(response.headers)
-    except urllib.error.HTTPError as exc:
-        if body is None:
-            if exc.code == 404:
-                raise HTTPException(404, "Hugging Face metadata item was not found") from exc
-            if exc.code == 429:
-                raise HTTPException(503, "Hugging Face metadata API rate limit reached") from exc
-            raise HTTPException(502, f"Hugging Face metadata API returned HTTP {exc.code}") from exc
-        # Do not echo upstream response bodies; they can contain sensitive provider diagnostics.
-        if exc.code in {401, 403}:
+        result, response_headers = request_json(
+            url,
+            method="POST" if body is not None else "GET",
+            payload=body,
+            headers=headers,
+            timeout=min(max(int(timeout), 1), 30),
+            attempts=3,
+            breaker=HF_PROVIDER_BREAKER,
+            max_response_bytes=2 * 1024 * 1024,
+            include_headers=True,
+        )
+        return result, response_headers
+    except NetworkError as exc:
+        message = str(exc)
+        if body is None and "HTTP 404" in message:
+            raise HTTPException(404, "Hugging Face metadata item was not found") from exc
+        if body is None and ("HTTP 429" in message or HF_PROVIDER_BREAKER.snapshot()["open"]):
+            raise HTTPException(503, "Hugging Face metadata API is rate-limited or temporarily unavailable") from exc
+        if body is not None and ("HTTP 401" in message or "HTTP 403" in message):
             raise HTTPException(502, "Hugging Face rejected the configured access token or permissions") from exc
-        raise HTTPException(502, f"Remote Inference Provider returned HTTP {exc.code}") from exc
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise HTTPException(502, "Hugging Face request failed: " + type(exc).__name__) from exc
+        raise HTTPException(502, "Hugging Face remote request failed: " + type(exc).__name__) from exc
 
 
 @app.get("/health")
@@ -92,6 +102,7 @@ def health():
     return {
         "status": "ok",
         "service": "teacher",
+        "runtime_peer": RUNTIME_MONITOR.snapshot(),
         "remote_inference_configured": bool(os.getenv("HF_TOKEN")),
         "metadata_token_configured": bool(os.getenv("HF_READ_TOKEN")),
         "attestation_configured": len(os.getenv("VORAX_TEACHER_ATTESTATION_KEY", "").strip()) >= 32,
