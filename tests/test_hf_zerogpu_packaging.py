@@ -75,16 +75,19 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn("ffmpeg", packages)
         self.assertIn("ca-certificates", packages)
 
-    def test_deploy_script_requires_existing_exact_sha_release_gate_and_free_zero_gpu(self):
+    def test_deploy_script_requires_explicit_local_approval_and_fresh_tests(self):
         source = self._read("scripts/deploy_hf_zerogpu_children.py")
         self.assertIn('"--deploy"', source)
-        self.assertIn("require_green_release.py", source)
-        self.assertIn("VORAX_RELEASE_TAG", source)
+        self.assertIn('"--manual-local-approval"', source)
+        self.assertIn("DEPLOY VORAX", source)
+        self.assertIn('git", "rev-parse", "origin/main"', source)
+        self.assertIn('"test_hf_zerogpu_packaging.py"', source)
+        self.assertIn('"github_actions_verified": False', source)
+        self.assertNotIn("require_green_release.py", source)
+        self.assertNotIn("VORAX_RELEASE_TAG", source)
         self.assertIn('space_hardware=ZERO_GPU', source)
         self.assertIn('ZERO_GPU = "zero-a10g"', source)
         self.assertIn('"VORAX_ALLOW_BILLABLE_INFERENCE": "false"', source)
-        self.assertIn('"github_actions_verified": True', source)
-        self.assertNotIn("--manual-release-approval", source)
         self.assertNotIn('space_hardware="cpu-basic"', source)
 
     def test_existing_docker_deployment_path_remains_present(self):
