@@ -1,4 +1,4 @@
-"""GitHub Home sync and direct trusted-Runtime child-to-Home commits."""
+"""GitHub Home metadata reads and isolated, reviewed Child knowledge proposals."""
 from __future__ import annotations
 
 import base64
