@@ -723,6 +723,7 @@ class VaultProtectionTests(unittest.TestCase):
             "id": record["id"],
             "path": f"vlang/pending/{record['id']}.vlang",
             "sha256": digest,
+            "home_pr": "https://github.com/musombi123/Revelacode123/pull/42",
         }]}
         def read_json(_api, _repo, path, default):
             if path == "vlang/pending/index.json":
