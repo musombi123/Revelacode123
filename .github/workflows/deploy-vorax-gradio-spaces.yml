@@ -1,0 +1,162 @@
+name: Deploy VORAX Gradio Teacher and Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DEPLOY-VORAX-GRAPH-2026 to approve updating both existing Hugging Face Spaces"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: vorax-hf-spaces-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY-VORAX-GRAPH-2026'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout approved main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require green verify check on this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, sys
+          result = subprocess.run(
+              ["gh", "api", f"repos/{os.environ['GH_REPO']}/commits/{os.environ['COMMIT_SHA']}/check-runs"],
+              check=True, capture_output=True, text=True,
+          )
+          checks = json.loads(result.stdout).get("check_runs", [])
+          verify = [c for c in checks if c.get("name") == "verify"]
+          if not verify or not any(c.get("status") == "completed" and c.get("conclusion") == "success" for c in verify):
+              print("Required verify check is not green on this exact commit.", file=sys.stderr)
+              sys.exit(1)
+          print("Exact-SHA verify check: success")
+
+      - name: Install deployment client
+        run: python -m pip install --disable-pip-version-check "huggingface_hub>=0.27,<2"
+
+      - name: Deploy current Gradio packages to the two existing Spaces
+        env:
+          HF_SPACE_TOKEN: ${{ secrets.HF_SPACE_TOKEN }}
+          HOME_COMMIT: ${{ github.sha }}
+        run: |
+          test -n "$HF_SPACE_TOKEN" || { echo "Missing HF_SPACE_TOKEN repository secret"; exit 1; }
+          python - <<'PY'
+          import os, shutil, tempfile, time, urllib.request, json
+          from pathlib import Path
+          from huggingface_hub import HfApi
+
+          root = Path.cwd()
+          api = HfApi(token=os.environ["HF_SPACE_TOKEN"])
+          owner = str(api.whoami().get("name") or "").casefold()
+          if owner != "musombi":
+              raise SystemExit("HF_SPACE_TOKEN must authenticate as the existing Space owner Musombi.")
+
+          teacher_id = "Musombi/vorax-teacher-service"
+          runtime_id = "Musombi/vorax-runtime-service"
+          teacher_src = root / "deploy" / "hf-teacher-gradio"
+          runtime_src = root / "deploy" / "hf-runtime-gradio"
+
+          # Refuse to create, convert, privatize, or change hardware on any Space.
+          for repo_id in (teacher_id, runtime_id):
+              info = api.repo_info(repo_id=repo_id, repo_type="space")
+              if getattr(info, "sdk", None) != "gradio" or getattr(info, "private", None) is not False:
+                  raise SystemExit(f"{repo_id} is not the expected existing public Gradio Space; refusing changes.")
+
+          with tempfile.TemporaryDirectory(prefix="vorax-gradio-release-") as temp:
+              temp = Path(temp)
+              teacher = temp / "teacher"
+              runtime = temp / "runtime"
+              teacher.mkdir()
+              runtime.mkdir()
+
+              for name in ("README.md", "requirements.txt", "app.py"):
+                  shutil.copy2(teacher_src / name, teacher / name)
+              shutil.copy2(root / "vorax" / "hf_teacher.py", teacher / "hf_teacher.py")
+
+              for name in ("README.md", "requirements.txt", "packages.txt", "app.py"):
+                  shutil.copy2(runtime_src / name, runtime / name)
+              shutil.copytree(
+                  root / "vorax", runtime / "vorax",
+                  ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "kaggle_gpu.py"),
+              )
+              if (runtime / "templates").exists():
+                  raise SystemExit("Refusing to upload Home method bodies into Runtime package.")
+
+              forbidden = {".safetensors", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".bin", ".h5", ".pb", ".tflite", ".msgpack"}
+              for package in (teacher, runtime):
+                  for item in package.rglob("*"):
+                      if item.is_file() and item.suffix.lower() in forbidden:
+                          raise SystemExit(f"Forbidden model weight file: {item.name}")
+                      if item.is_file() and item.name.lower() in {"requirements.txt", "pyproject.toml"}:
+                          text = item.read_text(encoding="utf-8", errors="replace").lower()
+                          if "diffusers" in text or "transformers" in text:
+                              raise SystemExit(f"Forbidden local model dependency in {item.name}")
+
+              api.upload_folder(
+                  repo_id=teacher_id, repo_type="space", folder_path=str(teacher),
+                  path_in_repo="", commit_message=f"Deploy Teacher from Home {os.environ['HOME_COMMIT'][:12]}",
+              )
+              api.upload_folder(
+                  repo_id=runtime_id, repo_type="space", folder_path=str(runtime),
+                  path_in_repo="", commit_message=f"Deploy Runtime from Home {os.environ['HOME_COMMIT'][:12]}",
+              )
+
+          def get_json(url):
+              req = urllib.request.Request(url, headers={"Accept": "application/json", "Cache-Control": "no-cache"})
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return response.status, json.loads(response.read().decode("utf-8"))
+
+          def wait_health(url, label):
+              deadline = time.monotonic() + 900
+              last = "not checked"
+              while time.monotonic() < deadline:
+                  try:
+                      status, payload = get_json(url)
+                      if status == 200 and payload.get("status") == "ok":
+                          return payload
+                      last = f"HTTP {status}, payload not ready"
+                  except Exception as exc:
+                      last = type(exc).__name__
+                  time.sleep(15)
+              raise SystemExit(f"{label} health did not recover within 15 minutes: {last}")
+
+          teacher_health = wait_health("https://musombi-vorax-teacher-service.hf.space/health", "Teacher")
+          if teacher_health.get("free_provider_only") is not True or teacher_health.get("billable_inference_allowed") is not False:
+              raise SystemExit("Teacher free-provider-only policy is not active.")
+          runtime_health = wait_health("https://musombi-vorax-runtime-service.hf.space/health", "Runtime")
+          if runtime_health.get("ready") is not True or runtime_health.get("home_method_bodies_loaded") is not False:
+              raise SystemExit("Runtime readiness or Home metadata-only boundary failed.")
+          status, spec = get_json("https://musombi-vorax-runtime-service.hf.space/openapi.json")
+          paths = spec.get("paths", {})
+          required = {"/vorax/cycle/start", "/vorax/cycle/pending", "/vorax/cycle/status"}
+          missing = sorted(required - set(paths))
+          if missing:
+              raise SystemExit("Runtime deployment is missing weekly routes: " + ", ".join(missing))
+          print(json.dumps({
+              "status": "deployed_and_verified",
+              "home_commit": os.environ["HOME_COMMIT"],
+              "teacher_health": "ok",
+              "runtime_health": "ready",
+              "weekly_routes": sorted(required),
+              "billable_inference_allowed": False,
+              "weights_downloaded": False,
+              "local_model_loaded": False,
+              "vault_replaced": False,
+          }, indent=2))
+          PY
