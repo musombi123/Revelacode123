@@ -18,6 +18,11 @@ The repository workflow is .github/workflows/vorax-weekly.yml:
   report/method pull requests.
 - workflow_dispatch: manual coordination for the current ISO week.
 
+The daily coordinator reconciles manifests from prior ISO weeks, retrieves
+undelivered reports, resumes due 24-hour retries, and dispatches queued hunters
+from all active cycles. It prioritizes retries before new-cycle work and launches
+at most three kernels per coordinator run.
+
 ### Required scheduler credentials
 
 Configure these repository Actions settings before the scheduled workflow can
@@ -80,7 +85,8 @@ Hunters do not communicate with one another. Each communicates with Runtime only
 Each kernel has a hard 7,200-second budget. A completed report is written to
 /kaggle/working/vorax-learning-report.json before Runtime delivery is attempted.
 If delivery fails, the next coordinator run retrieves the private kernel output
-and retries the report through Runtime.
+and retries the report through Runtime. Kernel IDs include ISO cycle and hunter
+attempt, so attempt 1 cannot overwrite attempt 0's output before recovery.
 
 ## Bounded discovery
 
@@ -109,6 +115,17 @@ to propose and review the assigned V-Lang method. Runtime requires exact task
 identity, input schema, triggers and required test vectors, then executes the
 candidate tests. It writes only verified candidates to the existing Vault
 pending area and creates an isolated Home PR.
+
+The reviewed seed curriculum currently contains 27 deterministic procedures.
+After those seeds are covered by Home and Vault pending records, Runtime generates
+new numeric-composition tasks from the six registered arithmetic operators
+(add, subtract, multiply, divide, percentage-of and percentage-change). Generated
+chains contain 2–11 operations, use no more than 12 numeric inputs, and include
+three independently calculated reference vectors. The grammar contains
+435,356,460 distinct ordered operator chains before repeating a chain shape.
+Generated tasks are also de-duplicated by Home metadata and Vault pending task
+and trigger coverage. This prevents the weekly curriculum from stopping when
+the initial seed set is exhausted.
 
 Vision/audio and video/tools hunters currently perform metadata discovery and
 produce missing-X priorities. The current Teacher gateway is text-oriented, and

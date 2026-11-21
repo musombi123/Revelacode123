@@ -68,11 +68,13 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertIn("expand%5B%5D=inferenceProviderMapping", call.call_args.args[0])
         self.assertIn("inference_provider=all", call.call_args.args[0])
 
-    def test_model_metadata_omits_large_card_data_expansion(self):
+    def test_model_metadata_is_capped_at_20_without_card_data_expansion(self):
         with patch.object(hf_teacher, "_http_json", return_value=([], {})) as call:
             hf_teacher._discover_kind("models", "example", 100)
         url = call.call_args.args[0]
-        self.assertIn("limit=100", url)
+        self.assertIn("limit=20", url)
+        self.assertNotIn("cardData", url)
+        self.assertNotIn("expand%5B%5D=cardData", url)
         self.assertIn("inference_provider=all", url)
         self.assertIn("expand%5B%5D=inferenceProviderMapping", url)
         self.assertNotIn("cardData", url)
@@ -418,6 +420,29 @@ class RuntimeServiceTests(unittest.TestCase):
         self.assertIs(proof["remote_inference"], True)
         self.assertIs(proof["kaggle_t4_used"], False)
         self.assertIs(proof["weights_downloaded"], False)
+
+    def test_expired_attestation_is_allowed_only_for_cached_runtime_replay(self):
+        import hashlib
+        import hmac
+        import json
+        import time
+
+        response = '{"candidate":"signed and cached"}'
+        attestation = self._signed_teacher_receipt(response)
+        attestation["payload"]["issued_at"] = int(time.time()) - 1800
+        canonical = json.dumps(
+            attestation["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        attestation["signature"] = hmac.new(
+            b"test-teacher-hmac-secret-long-enough", canonical.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        with patch.dict(os.environ, {"VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough"}):
+            with self.assertRaises(HTTPException):
+                hf_runtime._verify_teacher_attestation(response, attestation, "acme/example")
+            proof = hf_runtime._verify_teacher_attestation(
+                response, attestation, "acme/example", allow_expired=True
+            )
+        self.assertEqual(proof["issued_at"], attestation["payload"]["issued_at"])
 
     def test_runtime_rejects_forged_or_modified_teacher_response(self):
         response = '{"candidate":"not trusted"}'

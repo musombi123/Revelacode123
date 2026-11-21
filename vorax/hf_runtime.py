@@ -47,6 +47,9 @@ from .vault import (
     read_home_metadata_cache,
     write_home_metadata_cache,
     pending_method_ids,
+    pending_method_coverage,
+    pending_method_by_sha256,
+    list_weekly_cycle_manifests,
 )
 from .vlang import TemplateError, dump_record, validate_template
 from .tools import ARTIFACT_ROOT, execute_tool_dict
@@ -60,6 +63,7 @@ from .weekly_cycle import (
     validate_hunter_report,
     validate_candidate_for_curriculum,
     validate_cycle_id,
+    timestamp,
 )
 
 HOME_REPO = os.getenv("VORAX_HOME_REPO", "musombi123/Revelacode123")
@@ -268,6 +272,8 @@ def _verify_teacher_attestation(
     teacher_response: str,
     attestation: dict,
     expected_model_id: str,
+    *,
+    allow_expired: bool = False,
 ) -> dict:
     """Verify Teacher-signed provider provenance before trusting a Child-supplied method."""
     if not isinstance(teacher_response, str) or not teacher_response.strip():
@@ -301,7 +307,9 @@ def _verify_teacher_attestation(
     if not isinstance(issued_at, int) or isinstance(issued_at, bool):
         raise HTTPException(403, "Teacher attestation timestamp is invalid")
     now = int(time.time())
-    if issued_at > now + 60 or now - issued_at > 900:
+    if issued_at > now + 60:
+        raise HTTPException(403, "Teacher attestation timestamp is in the future")
+    if not allow_expired and now - issued_at > 900:
         raise HTTPException(403, "Teacher attestation has expired")
     response_sha = hashlib.sha256(teacher_response.encode("utf-8")).hexdigest()
     if payload.get("response_sha256") != response_sha:
@@ -314,8 +322,15 @@ def _validate_teacher_candidate(
     attestation: dict,
     candidate: dict,
     model_id: str,
+    *,
+    allow_expired: bool = False,
 ) -> dict:
-    proof = _verify_teacher_attestation(teacher_response, attestation, model_id)
+    proof = _verify_teacher_attestation(
+        teacher_response,
+        attestation,
+        model_id,
+        allow_expired=allow_expired,
+    )
     extracted = _parse_candidate(teacher_response)
     if not isinstance(candidate, dict):
         raise HTTPException(422, "method must be a V-Lang object")
@@ -366,20 +381,6 @@ def _verify_and_submit(
         validate_template(record, run_tests=True)
         canonical = dump_record(record).encode("utf-8")
         method_sha = hashlib.sha256(canonical).hexdigest()
-        if cycle_id:
-            if not hunter_id:
-                raise HTTPException(422, "hunter_id is required with cycle_id")
-            try:
-                claim = claim_weekly_proposal_digest(method_sha, cycle_id, hunter_id)
-            except VaultError as exc:
-                raise HTTPException(503, "Runtime weekly proposal deduplication is unavailable") from exc
-            if claim.get("duplicate") is True:
-                raise HTTPException(409, {
-                    "status": "duplicate",
-                    "reason": "method_sha256_already_claimed_in_cycle",
-                    "method_sha256": method_sha,
-                    "first_hunter_id": claim.get("first_hunter_id"),
-                })
         # Pending candidates are deliberately not added to the executable catalog.
         # Runtime never executes pending proposals; Home approval remains a separate gate.
     except (TemplateError, ValueError) as exc:
@@ -399,6 +400,68 @@ def _verify_and_submit(
     except VaultError as exc:
         raise HTTPException(503, "Vault pending index could not be inspected: " + str(exc)) from exc
     if pending_duplicate:
+        if cycle_id:
+            try:
+                existing_pending = pending_method_by_sha256(method_sha)
+            except VaultError as exc:
+                raise HTTPException(503, "Runtime could not verify a cached pending proposal") from exc
+            if existing_pending is not None:
+                try:
+                    claim = claim_weekly_proposal_digest(method_sha, cycle_id, hunter_id)
+                except VaultError as exc:
+                    raise HTTPException(503, "Runtime weekly proposal de-duplication is unavailable") from exc
+                if claim.get("idempotent_retry") is True:
+                    entry = existing_pending["entry"]
+                    home_submission = {
+                        "status": "submitted_for_home_review" if entry.get("home_pr") else "pending_retry",
+                        "pr_url": entry.get("home_pr"),
+                        "vault_tracking": "existing_pending_method",
+                    }
+                    if not entry.get("home_pr"):
+                        try:
+                            submitted = create_home_pull_request(
+                                HOME_REPO, HOME_BRANCH, child_id, existing_pending["record"], HOME_WRITE_TOKEN
+                            )
+                            mark_pending_home_submission(
+                                existing_pending["record"]["id"],
+                                submitted["pr_url"],
+                                submission_kind="pull_request",
+                            )
+                            home_submission = {
+                                "status": "submitted_for_home_review",
+                                "pr_url": submitted["pr_url"],
+                                "branch": submitted["branch"],
+                                "vault_tracking": "linked_to_home_pull_request",
+                                "idempotent_retry": True,
+                            }
+                        except Exception as exc:
+                            home_submission = {
+                                "status": "pending_retry",
+                                "reason": type(exc).__name__,
+                                "vault_tracking": "existing_pending_method",
+                            }
+                    verification = {
+                        "status": "runtime_tests_passed",
+                        "authority": "trusted_vorax_vlang_interpreter",
+                        "tests_passed": len(existing_pending["record"].get("tests", [])),
+                        "method_sha256": method_sha,
+                        "home_certification": "pending",
+                        "child_self_certification": False,
+                        "idempotent_recovery": True,
+                    }
+                    return {
+                        "status": "verified",
+                        "method": existing_pending["record"]["id"],
+                        "method_sha256": method_sha,
+                        "artifact_sha256": None,
+                        "verification": verification,
+                        "vault": {
+                            "status": "already_pending",
+                            "path": existing_pending["path"],
+                            "sha256": method_sha,
+                        },
+                        "home_submission": home_submission,
+                    }
         _log(
             "method_already_pending",
             child_id=child_id,
@@ -412,6 +475,21 @@ def _verify_and_submit(
             "reason": pending_duplicate,
             "home_certification": "pending",
         })
+
+    if cycle_id:
+        if not hunter_id:
+            raise HTTPException(422, "hunter_id is required with cycle_id")
+        try:
+            claim = claim_weekly_proposal_digest(method_sha, cycle_id, hunter_id)
+        except VaultError as exc:
+            raise HTTPException(503, "Runtime weekly proposal deduplication is unavailable") from exc
+        if claim.get("duplicate") is True:
+            raise HTTPException(409, {
+                "status": "duplicate",
+                "reason": "method_sha256_already_claimed_in_cycle",
+                "method_sha256": method_sha,
+                "first_hunter_id": claim.get("first_hunter_id"),
+            })
 
     verification = {
         "status": "runtime_tests_passed",
@@ -736,9 +814,18 @@ def verify_method(
         )
         if not assignment or assignment.get("status") not in {"queued", "running"}:
             raise HTTPException(409, "Hunter is not active in this weekly cycle")
+        if hunter_id != "hunter-1":
+            raise HTTPException(
+                403,
+                "Vision/Audio and Video/Tools hunters are discovery-only until Runtime supports verified multimodal artifacts",
+            )
         if body.get("attempt") != assignment.get("attempt", 0):
             raise HTTPException(409, "Hunter attempt is required and must match the current cycle assignment")
-        if any(step.get("op") == "call_tool" for step in method.get("steps", []) if isinstance(step, dict)):
+        if any(
+            str(step.get("op", "")).casefold() == "call_tool"
+            for step in method.get("steps", [])
+            if isinstance(step, dict)
+        ):
             raise HTTPException(
                 422,
                 "Weekly CALL TOOL acquisition requires real remote artifact evidence; contract-only tests are insufficient",
@@ -815,6 +902,68 @@ def reconcile_vault(
     )
     return result
 
+
+
+def _finalize_weekly_cycle_report(manifest: dict) -> dict:
+    """Persist one aggregate report and retry its Home PR without overwriting prior reports."""
+    cycle_id = manifest.get("cycle_id")
+    if manifest.get("status") not in {"complete", "failed"}:
+        return {"status": "not_terminal"}
+    try:
+        final_report = read_weekly_report(cycle_id)
+        if final_report is None:
+            reports = []
+            for assignment in manifest.get("hunter_assignments", []):
+                attempt = int(assignment.get("attempt", 0))
+                hunter_report = read_weekly_hunter_report(
+                    cycle_id,
+                    assignment.get("hunter_id"),
+                    attempt,
+                )
+                if hunter_report is None:
+                    return {
+                        "status": "incomplete",
+                        "reason": "missing_hunter_report",
+                        "hunter_id": assignment.get("hunter_id"),
+                        "attempt": attempt,
+                    }
+                reports.append(hunter_report)
+            final_report = aggregate_hunter_reports(manifest, reports)
+            final_report["status"] = manifest["status"]
+            # Once this immutable report exists, later retries reuse these exact bytes.
+            vault_receipt = write_weekly_report(final_report)
+        else:
+            vault_receipt = {
+                "status": "already_stored",
+                "path": f"reports/weekly/{cycle_id}.json",
+            }
+    except VaultError as exc:
+        raise HTTPException(503, "Runtime could not finalize the weekly report") from exc
+
+    submission = manifest.get("home_report_submission") or {}
+    if submission.get("status") not in {
+        "submitted_for_home_review",
+        "already_in_home",
+    }:
+        try:
+            submission = create_home_report_pull_request(
+                HOME_REPO,
+                HOME_BRANCH,
+                final_report,
+                HOME_WRITE_TOKEN,
+            )
+        except Exception as exc:
+            submission = {
+                "status": "pending_retry",
+                "reason": type(exc).__name__,
+            }
+        manifest["home_report_submission"] = submission
+    return {
+        "status": "finalized",
+        "report": final_report,
+        "vault": vault_receipt,
+        "home_report": submission,
+    }
 
 
 @app.post("/vorax/cycle/start")
@@ -926,6 +1075,28 @@ def start_weekly_cycle(
                     "reason": type(proposal_exc).__name__,
                 })
 
+            # Reconcile cycle-level state from the persisted hunter assignments,
+            # including workers that completed while the cycle was paused.
+            hunter_states = [
+                item.get("status")
+                for item in updated.get("hunter_assignments", [])
+            ]
+            if hunter_states and all(state == "completed" for state in hunter_states):
+                updated["status"] = "complete"
+                updated["retry_after"] = None
+            elif hunter_states and all(
+                state in {"completed", "failed", "timed_out"}
+                for state in hunter_states
+            ):
+                if int(updated.get("retry_count", 0)) < 1:
+                    if updated.get("status") != "retry_scheduled":
+                        updated["retry_after"] = timestamp(now + timedelta(hours=24))
+                    updated["status"] = "retry_scheduled"
+                else:
+                    updated["status"] = "failed"
+                    updated["retry_after"] = None
+                    updated["failure_reason"] = "Hunter mesh remained incomplete after one retry"
+
             if updated.get("status") == "paused_teacher" and peer.get("live") is True:
                 updated["status"] = "discovering"
                 updated.pop("pause_reason", None)
@@ -934,25 +1105,13 @@ def start_weekly_cycle(
                 updated["pause_reason"] = "teacher_gateway_unavailable"
 
             updated = prepare_cycle_retry(updated, now=now)
+            # A due retry must remain paused while the Teacher gateway is down.
+            if updated.get("status") == "discovering" and peer.get("live") is not True:
+                updated["status"] = "paused_teacher"
+                updated["pause_reason"] = "teacher_gateway_unavailable"
 
-            # A completed report remains durable in Vault if Home was unavailable.
-            # Re-attempt only the report PR; never rewrite Home main directly.
-            submission = updated.get("home_report_submission") or {}
-            if (
-                updated.get("status") in {"complete", "failed"}
-                and submission.get("status") == "pending_retry"
-            ):
-                final_report = read_weekly_report(cycle_id)
-                if final_report:
-                    try:
-                        updated["home_report_submission"] = create_home_report_pull_request(
-                            HOME_REPO, HOME_BRANCH, final_report, HOME_WRITE_TOKEN
-                        )
-                    except GitHubHomeError as exc:
-                        updated["home_report_submission"] = {
-                            "status": "pending_retry",
-                            "reason": type(exc).__name__,
-                        }
+            # A terminal cycle always has an aggregate report before it is complete.
+            finalization = _finalize_weekly_cycle_report(updated)
             if updated != existing:
                 write_weekly_cycle_manifest(updated)
             return {
@@ -960,6 +1119,7 @@ def start_weekly_cycle(
                 "manifest": updated,
                 "teacher_peer": peer,
                 "home_proposal_retries": home_proposal_retries,
+                "weekly_report": finalization,
                 "reused": True,
             }
 
@@ -970,15 +1130,21 @@ def start_weekly_cycle(
                 "Home metadata-only index is unavailable; Runtime will not begin a duplicate-blind cycle",
             )
         try:
-            pending_ids = pending_method_ids()
+            pending_methods = pending_method_coverage()
+            pending_ids = {
+                item.get("id")
+                for item in pending_methods
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
         except VaultError as exc:
-            raise HTTPException(503, "Runtime could not inspect pending method IDs for curriculum deduplication") from exc
+            raise HTTPException(503, "Runtime could not inspect pending method coverage for curriculum de-duplication") from exc
         manifest = build_cycle_manifest(
             cycle_id,
             hunter_count=body.get("hunter_count", 3),
             home_issue_url=body.get("home_issue_url"),
             home_index=home_index,
             pending_method_ids=pending_ids,
+            pending_methods=pending_methods,
         )
         manifest["home_index_status"] = index_status.get("status")
         manifest["home_index_stale"] = bool(index_status.get("stale"))
@@ -1003,6 +1169,85 @@ def start_weekly_cycle(
         weights_downloaded=False,
     )
     return {"status": manifest["status"], "manifest": manifest, "vault": receipt, "teacher_peer": peer, "reused": False}
+
+@app.get("/vorax/cycle/pending")
+def list_pending_hunter_reports(
+    x_child_id: str | None = Header(default=None, alias="x-child-id"),
+    x_child_key: str | None = Header(default=None, alias="x-child-key"),
+):
+    """List durable reports, old-cycle reconciliation needs, and queued assignments."""
+    _require_child(x_child_id, x_child_key)
+    pending_reports = []
+    queued_hunters = []
+    reconcile_cycles = []
+    try:
+        manifests = list_weekly_cycle_manifests(limit=1000)
+        for manifest in manifests:
+            cycle_id = manifest["cycle_id"]
+            updated = manifest
+            changed = False
+            if updated.get("status") in {"discovering", "paused_teacher", "retry_scheduled"}:
+                reconcile_cycles.append({
+                    "cycle_id": cycle_id,
+                    "status": updated.get("status"),
+                })
+            for assignment in list(updated.get("hunter_assignments", [])):
+                hunter_id = assignment.get("hunter_id")
+                attempt = int(assignment.get("attempt", 0))
+                if assignment.get("status") != "running":
+                    continue
+                report = read_weekly_hunter_report(cycle_id, hunter_id, attempt)
+                if report is not None:
+                    updated = update_hunter_assignment(
+                        updated,
+                        hunter_id,
+                        status=report.get("status", "completed"),
+                        report=report,
+                        reason=report.get("failure_reason"),
+                    )
+                    changed = True
+                else:
+                    pending_reports.append({
+                        "cycle_id": cycle_id,
+                        "hunter_id": hunter_id,
+                        "discovery_slice": assignment.get("discovery_slice"),
+                        "attempt": attempt,
+                        "report_path": assignment.get("report_path"),
+                        "status": assignment.get("status"),
+                    })
+            if changed:
+                write_weekly_cycle_manifest(updated)
+                _finalize_weekly_cycle_report(updated)
+                write_weekly_cycle_manifest(updated)
+
+            if updated.get("status") == "discovering":
+                for assignment in updated.get("hunter_assignments", []):
+                    if assignment.get("status") != "queued":
+                        continue
+                    queued_hunters.append({
+                        "cycle_id": cycle_id,
+                        "hunter_id": assignment.get("hunter_id"),
+                        "discovery_slice": assignment.get("discovery_slice"),
+                        "attempt": int(assignment.get("attempt", 0)),
+                        "report_path": assignment.get("report_path"),
+                        "status": "queued",
+                        "retry_count": int(updated.get("retry_count", 0)),
+                        "cycle_created_at": updated.get("created_at"),
+                        "curriculum_task": updated.get("curriculum_task") if assignment.get("hunter_id") == "hunter-1" else None,
+                    })
+    except (VaultError, WeeklyCycleError) as exc:
+        raise HTTPException(503, "Runtime could not list pending weekly hunter work") from exc
+    return {
+        "pending_reports": pending_reports[:300],
+        "pending_count": len(pending_reports),
+        "queued_hunters": queued_hunters[:300],
+        "queued_count": len(queued_hunters),
+        "reconcile_cycles": reconcile_cycles[:1000],
+        "reconcile_count": len(reconcile_cycles),
+        "vault_source": "Runtime_owned_weekly_manifests",
+        "children_have_vault_access": False,
+    }
+
 
 
 @app.get("/vorax/cycle/status")
@@ -1049,6 +1294,12 @@ def update_weekly_hunter_status(
             raise HTTPException(403, "Hunter is not assigned to this cycle")
         if body.get("attempt", assignment.get("attempt", 0)) != assignment.get("attempt", 0):
             raise HTTPException(409, "Hunter attempt does not match the current cycle assignment")
+        if state == "completed":
+            existing_success_report = read_weekly_hunter_report(
+                cycle_id, hunter_id, int(assignment.get("attempt", 0))
+            )
+            if not existing_success_report or existing_success_report.get("status") != "completed":
+                raise HTTPException(409, "A successful hunter report is required before marking a hunter completed")
         if state in {"failed", "timed_out"}:
             existing_report = read_weekly_hunter_report(
                 cycle_id, hunter_id, int(assignment.get("attempt", 0))
@@ -1083,6 +1334,7 @@ def update_weekly_hunter_status(
             status=state,
             reason=body.get("reason"),
         )
+        finalization = _finalize_weekly_cycle_report(updated)
         receipt = write_weekly_cycle_manifest(updated)
     except WeeklyCycleError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -1096,7 +1348,143 @@ def update_weekly_hunter_status(
         verification=state,
         cycle_id=cycle_id,
     )
-    return {"status": updated.get("status"), "manifest": updated, "vault": receipt}
+    return {
+        "status": updated.get("status"),
+        "manifest": updated,
+        "vault": receipt,
+        "weekly_report": finalization,
+    }
+
+def _replay_cached_hunter_proposals(
+    child_id: str,
+    cycle_id: str,
+    hunter_id: str,
+    assignment: dict,
+    report: dict,
+) -> dict:
+    """Replay cached Teacher-attested candidates through Runtime after a network outage."""
+    cached = report.get("cached_proposals", [])
+    if not isinstance(cached, list):
+        raise HTTPException(422, "cached_proposals must be a list")
+    if not cached:
+        return {"replayed": 0, "verified": 0, "rejected": 0}
+    if hunter_id != "hunter-1":
+        raise HTTPException(
+            403,
+            "Vision/Audio and Video/Tools hunters cannot submit methods without a verified multimodal artifact path",
+        )
+
+    replayed = 0
+    verified_count = 0
+    rejected = list(report.get("rejected", [])) if isinstance(report.get("rejected"), list) else []
+    added_count = 0
+    outcomes = []
+    for proposal in cached[:5]:
+        if not isinstance(proposal, dict):
+            rejected.append({"reason": "invalid_cached_proposal"})
+            continue
+        method = proposal.get("method")
+        teacher_response = proposal.get("teacher_response")
+        teacher_attestation = proposal.get("teacher_attestation")
+        teacher_model_id = proposal.get("teacher_model_id")
+        if (
+            not isinstance(method, dict)
+            or not isinstance(teacher_response, str)
+            or not isinstance(teacher_model_id, str)
+        ):
+            rejected.append({"method_id": (method or {}).get("id") if isinstance(method, dict) else None,
+                             "reason": "cached_teacher_evidence_incomplete"})
+            continue
+        try:
+            _validate_teacher_candidate(
+                teacher_response,
+                teacher_attestation,
+                method,
+                teacher_model_id,
+                allow_expired=True,
+            )
+            if any(
+                str(step.get("op", "")).casefold() == "call_tool"
+                for step in method.get("steps", [])
+                if isinstance(step, dict)
+            ):
+                raise HTTPException(422, "Weekly CALL TOOL candidate has no independently verified media artifact")
+            if hunter_id == "hunter-1":
+                task = None
+                # The cycle task is read from the persisted manifest, never trusted from the child report.
+                try:
+                    cycle_manifest = read_weekly_cycle_manifest(cycle_id)
+                except VaultError as exc:
+                    raise HTTPException(503, "Runtime could not read the weekly curriculum task") from exc
+                task = cycle_manifest.get("curriculum_task") if cycle_manifest else None
+                if not isinstance(task, dict):
+                    raise HTTPException(409, "No text/doc curriculum task is assigned for this cycle")
+                validate_candidate_for_curriculum(method, task)
+            result = _verify_and_submit(
+                method,
+                child_id,
+                teacher_model_id,
+                str(method.get("task") or method.get("id") or "weekly method recovery"),
+                cycle_id=cycle_id,
+                hunter_id=hunter_id,
+            )
+            replayed += 1
+            if result.get("status") == "verified":
+                verified_count += 1
+                if (result.get("home_submission") or {}).get("status") == "merged_and_promoted":
+                    added_count += 1
+                outcomes.append({
+                    "method_id": result.get("method"),
+                    "method_sha256": result.get("method_sha256"),
+                    "status": "verified",
+                    "home_submission": (result.get("home_submission") or {}).get("status"),
+                })
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            detail = exc.detail
+            reason = detail.get("reason") if isinstance(detail, dict) else str(detail)
+            rejected.append({
+                "method_id": method.get("id"),
+                "reason": str(reason or "runtime_rejected_cached_proposal")[:200],
+            })
+            outcomes.append({
+                "method_id": method.get("id"),
+                "status": "rejected",
+                "reason": str(reason or "runtime_rejected_cached_proposal")[:200],
+            })
+
+    # One hunter currently proposes at most one curriculum method per cycle.
+    # A report can already contain a successful Runtime receipt from before its
+    # delivery connection dropped; max() preserves that evidence without double-counting.
+    report["acquired_count"] = max(
+        0, int(report.get("acquired_count", 0) or 0), verified_count
+    )
+    report["verified_count"] = max(
+        0, int(report.get("verified_count", 0) or 0), verified_count
+    )
+    report["added_count"] = max(
+        0, int(report.get("added_count", 0) or 0), added_count
+    )
+    report["rejected"] = rejected[:100]
+    report["rejected_count"] = len(report["rejected"])
+    report["cached_proposal_replay"] = {
+        "replayed": replayed,
+        "verified": verified_count,
+        "rejected": len(outcomes) - verified_count,
+        "outcomes": outcomes,
+        "authority": "trusted_runtime_teacher_attestation_and_vlang_tests",
+    }
+    if verified_count or replayed:
+        report["status"] = "completed"
+        if report.get("failure"):
+            report["recovered_failure"] = report["failure"]
+    return {
+        "replayed": replayed,
+        "verified": verified_count,
+        "rejected": len(outcomes) - verified_count,
+    }
+
 
 
 @app.post("/vorax/cycle/hunter-report")
@@ -1123,6 +1511,11 @@ def receive_weekly_hunter_report(
             raise HTTPException(403, "Hunter is not assigned to this cycle")
         if attempt != assignment.get("attempt", 0):
             raise HTTPException(409, "Stale hunter report attempt; it will not replace current evidence")
+        if not isinstance(raw_report, dict):
+            raise HTTPException(422, "Hunter report must be a JSON object")
+        source_report_sha = hashlib.sha256(
+            json.dumps(raw_report, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
         report = validate_hunter_report(
             raw_report,
             cycle_id=cycle_id,
@@ -1130,16 +1523,20 @@ def receive_weekly_hunter_report(
             discovery_slice=assignment["discovery_slice"],
             attempt=attempt,
         )
+        if report.get("status") == "completed" or report.get("cached_proposals"):
+            _replay_cached_hunter_proposals(
+                child_id,
+                cycle_id,
+                hunter_id,
+                assignment,
+                report,
+            )
+        report["source_report_sha256"] = source_report_sha
         existing_report = read_weekly_hunter_report(cycle_id, hunter_id, attempt)
         if existing_report:
-            existing_sha = hashlib.sha256(
-                json.dumps(existing_report, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-            ).hexdigest()
-            incoming_sha = hashlib.sha256(
-                json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-            ).hexdigest()
-            if existing_sha != incoming_sha:
+            if existing_report.get("source_report_sha256") != source_report_sha:
                 raise HTTPException(409, "A different report already exists for this hunter attempt")
+            report = existing_report
             report_receipt = {
                 "status": "already_stored",
                 "path": f"reports/weekly/hunters/{cycle_id}/{hunter_id}-attempt-{attempt}.json",
@@ -1162,35 +1559,9 @@ def receive_weekly_hunter_report(
     except VaultError as exc:
         raise HTTPException(503, "Runtime could not store the weekly hunter report") from exc
 
-    home_report = None
-    final_report_receipt = None
-    if updated.get("status") in {"complete", "failed"}:
-        reports = []
-        for item in updated.get("hunter_assignments", []):
-            try:
-                hunter_report = read_weekly_hunter_report(
-                    cycle_id, item["hunter_id"], int(item.get("attempt", 0))
-                )
-            except VaultError as exc:
-                raise HTTPException(503, "Runtime could not reconcile hunter reports") from exc
-            if hunter_report:
-                reports.append(hunter_report)
-            else:
-                raise HTTPException(503, "Weekly cycle is incomplete because a hunter report is missing")
-        final_report = aggregate_hunter_reports(updated, reports)
-        final_report["status"] = updated.get("status")
-        final_report_receipt = write_weekly_report(final_report)
-        try:
-            home_report = create_home_report_pull_request(
-                HOME_REPO, HOME_BRANCH, final_report, HOME_WRITE_TOKEN
-            )
-            updated["home_report_submission"] = home_report
-        except GitHubHomeError as exc:
-            updated["home_report_submission"] = {
-                "status": "pending_retry",
-                "reason": type(exc).__name__,
-            }
-        write_weekly_cycle_manifest(updated)
+    finalization = _finalize_weekly_cycle_report(updated)
+    manifest_receipt = write_weekly_cycle_manifest(updated)
+
 
     _log(
         "weekly_hunter_report_received",
@@ -1207,6 +1578,7 @@ def receive_weekly_hunter_report(
         "manifest": updated,
         "hunter_report": report_receipt,
         "manifest_receipt": manifest_receipt,
-        "weekly_report": final_report_receipt,
-        "home_report": home_report,
+        "weekly_report": finalization.get("vault"),
+        "home_report": finalization.get("home_report"),
+        "finalization": finalization,
     }

@@ -81,7 +81,6 @@ def _http_json(url: str, *, token: str = "", body: dict | None = None, timeout: 
             headers=headers,
             timeout=min(max(int(timeout), 1), 30),
             attempts=3,
-            breaker=HF_PROVIDER_BREAKER,
             max_response_bytes=2 * 1024 * 1024,
             include_headers=True,
         )
@@ -124,13 +123,7 @@ def _metadata_item(item: dict, source_type: str) -> dict | None:
     item_id = item.get("id")
     if not isinstance(item_id, str) or not item_id:
         return None
-    card = item.get("cardData") if isinstance(item.get("cardData"), dict) else {}
-    description = (
-        card.get("description")
-        or card.get("summary")
-        or item.get("description")
-        or ""
-    )
+    description = item.get("description") or ""
     mapping = item.get("inferenceProviderMapping")
     providers = []
     if isinstance(mapping, dict):
@@ -156,6 +149,7 @@ def _metadata_item(item: dict, source_type: str) -> dict | None:
         "providers": providers,
     }
 def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None):
+    limit = min(max(int(limit), 1), 20)
     if kind not in {"models", "spaces", "datasets"}:
         raise HTTPException(422, "source must be models, spaces, datasets, or all")
     params = [("limit", str(limit))]
@@ -287,11 +281,12 @@ def _discover_router_models(
 @app.get("/teacher/discover")
 def discover(
     query: str = Query(default="", max_length=160),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=20),
     source: str = Query(default="all", pattern="^(models|spaces|datasets|all)$"),
     cursor: str | None = Query(default=None, max_length=2000),
 ):
     """Discover Hub model/service/data metadata only. No file, config or weight is downloaded."""
+    limit = min(max(int(limit), 1), 20)
     kinds = ("models", "spaces", "datasets") if source == "all" else (source,)
     found = {}
     cursors = {}

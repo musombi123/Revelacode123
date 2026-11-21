@@ -39,6 +39,17 @@ class NetworkRetryTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(calls["count"], 2)
 
+    def test_accepts_json_array_payloads_for_metadata_endpoints(self):
+        class ArrayResponse(FakeResponse):
+            def read(self, size=-1):
+                return json.dumps([{"id": "org/model-a"}]).encode("utf-8")
+
+        result = request_json(
+            "https://example.test/api/models",
+            opener=lambda *a, **k: ArrayResponse([]),
+        )
+        self.assertEqual(result[0]["id"], "org/model-a")
+
     def test_rejects_response_above_configured_size_limit(self):
         with self.assertRaises(NetworkError):
             request_json(
@@ -67,6 +78,33 @@ class NetworkRetryTests(unittest.TestCase):
     def test_rejects_plain_http(self):
         with self.assertRaises(NetworkError):
             request_json("http://example.test/health", opener=lambda *a, **k: None)
+
+    def test_non_retryable_http_404_does_not_open_the_circuit(self):
+        breaker = CircuitBreaker()
+        def not_found(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 404, "not found", {}, None)
+        with self.assertRaises(NetworkError):
+            request_json(
+                "https://example.test/weekly-report.json",
+                breaker=breaker,
+                attempts=1,
+                opener=not_found,
+            )
+        self.assertEqual(breaker.snapshot()["failures_in_window"], 0)
+        self.assertFalse(breaker.snapshot()["open"])
+
+    def test_retryable_server_error_counts_toward_the_circuit(self):
+        breaker = CircuitBreaker()
+        def unavailable(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 503, "unavailable", {}, None)
+        with self.assertRaises(NetworkError):
+            request_json(
+                "https://example.test/health",
+                breaker=breaker,
+                attempts=1,
+                opener=unavailable,
+            )
+        self.assertGreaterEqual(breaker.snapshot()["failures_in_window"], 1)
 
     def test_circuit_opens_after_five_failures_in_ten_minutes(self):
         now = {"value": 10.0}

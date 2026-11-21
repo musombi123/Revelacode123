@@ -1,7 +1,9 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
+from vorax.tlang import validate_template
 from vorax.weekly_cycle import (
+    WEEKLY_CAPABILITY_CURRICULUM,
     WeeklyCycleError,
     aggregate_hunter_reports,
     build_cycle_manifest,
@@ -22,6 +24,11 @@ class WeeklyCycleTests(unittest.TestCase):
     def test_rejects_invalid_cycle_id(self):
         with self.assertRaises(WeeklyCycleError):
             validate_cycle_id("2026-W99")
+
+    def test_curriculum_contains_more_than_20_distinct_tasks(self):
+        task_ids = [item["id"] for item in WEEKLY_CAPABILITY_CURRICULUM]
+        self.assertGreaterEqual(len(task_ids), 20)
+        self.assertEqual(len(task_ids), len(set(task_ids)))
 
     def test_builds_three_bounded_assignments(self):
         manifest = build_cycle_manifest("2026-W48")
@@ -59,18 +66,62 @@ class WeeklyCycleTests(unittest.TestCase):
         )
         self.assertEqual(task["id"], "business.markup_percent")
 
-    def test_all_tasks_covered_returns_no_task(self):
-        index = {"records": [
+    def test_pending_equivalent_task_is_not_relearned(self):
+        task = select_weekly_curriculum_task(
+            "2026-W48",
+            {"records": []},
+            pending_methods=[{
+                "id": "legacy.gross_margin",
+                "domain": "business",
+                "task": "calculate gross profit margin as a percentage of revenue",
+                "triggers": ["gross margin"],
+            }],
+        )
+        self.assertEqual(task["id"], "business.markup_percent")
+
+
+    def test_generated_curriculum_keeps_learning_after_seed_catalogue_is_covered(self):
+        records = [
             {
-                "id": item["id"],
-                "domain": item["domain"],
-                "task": item["task"],
-                "triggers": item["triggers"],
+                "id": task["id"],
+                "domain": task["domain"],
+                "task": task["task"],
+                "triggers": task["triggers"],
                 "method_sha256": "a" * 64,
             }
-            for item in __import__("vorax.weekly_cycle", fromlist=["WEEKLY_CAPABILITY_CURRICULUM"]).WEEKLY_CAPABILITY_CURRICULUM
-        ]}
-        self.assertIsNone(select_weekly_curriculum_task("2026-W48", index))
+            for task in WEEKLY_CAPABILITY_CURRICULUM
+        ]
+        task = select_weekly_curriculum_task("2027-W01", {"records": records})
+        self.assertEqual(task["curriculum_kind"], "generated_deterministic_numeric_chain")
+        self.assertGreaterEqual(len(task["operation_chain"]), 2)
+        self.assertLessEqual(len(task["operation_chain"]), 11)
+        self.assertEqual(len(task["tests"]), 3)
+        self.assertLessEqual(len(task["inputs"]), 12)
+        steps = []
+        for index, operation in enumerate(task["operation_chain"]):
+            args = (
+                [{"input": task["ordered_inputs"][0]}, {"input": task["ordered_inputs"][1]}]
+                if index == 0
+                else [{"step": f"stage_{index}"}, {"input": task["ordered_inputs"][index + 1]}]
+            )
+            steps.append({"op": operation, "args": args, "as": f"stage_{index + 1}"})
+        candidate = {
+            "version": "vlang/1",
+            "id": task["id"],
+            "domain": task["domain"],
+            "task": task["task"],
+            "triggers": task["triggers"],
+            "inputs": task["inputs"],
+            "steps": steps,
+            "result": {"step": f"stage_{len(steps)}"},
+            "tests": task["tests"],
+            "provenance": {"kind": "teacher", "teacher": "test-teacher"},
+        }
+        validate_candidate_for_curriculum(candidate, task)
+        validate_template(candidate, run_tests=True)
+        candidate["steps"][0]["op"] = "add" if candidate["steps"][0]["op"] != "add" else "subtract"
+        with self.assertRaises(WeeklyCycleError):
+            validate_candidate_for_curriculum(candidate, task)
 
     def test_candidate_must_keep_assigned_task_and_required_vectors(self):
         task = select_weekly_curriculum_task("2026-W48", {"records": []})

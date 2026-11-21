@@ -101,7 +101,7 @@ def request_json(
     sleeper: Callable[[float], None] = time.sleep,
     max_response_bytes: int = 3 * 1024 * 1024,
     include_headers: bool = False,
-) -> dict | tuple[dict, dict]:
+) -> dict | list | tuple[dict | list, dict]:
     """Request JSON with a 30s cap, three tries, exponential backoff and redacted logs."""
     if not isinstance(url, str) or not url.startswith("https://"):
         raise NetworkError("VORAX network requests require an HTTPS URL")
@@ -137,8 +137,8 @@ def request_json(
                 if len(raw) > max_response_bytes:
                     raise NetworkError("Remote JSON response exceeded its configured size limit")
                 value = json.loads(raw.decode("utf-8"))
-                if not isinstance(value, dict):
-                    raise NetworkError("Remote service returned a non-object JSON response")
+                if not isinstance(value, (dict, list)):
+                    raise NetworkError("Remote service returned an unsupported JSON response")
                 status = getattr(response, "status", 200)
                 response_headers = dict(getattr(response, "headers", {}) or {})
                 if breaker:
@@ -158,8 +158,14 @@ def request_json(
         except urllib.error.HTTPError as exc:
             status = int(exc.code)
             last_error = NetworkError(f"Remote service returned HTTP {status}")
+            retryable = status in {408, 425, 429} or status >= 500
             if breaker:
-                breaker.record_failure()
+                # A normal 4xx response still proves the peer is reachable. Count
+                # only transport/rate-limit/server failures toward the open circuit.
+                if retryable:
+                    breaker.record_failure()
+                else:
+                    breaker.record_success()
             LOGGER.warning(json.dumps({
                 "event": "network_request",
                 "request_id": request_id,
@@ -169,7 +175,7 @@ def request_json(
                 "status": status,
                 "attempt": attempt,
             }))
-            if status not in {408, 425, 429} and status < 500:
+            if not retryable:
                 break
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, NetworkError) as exc:
             last_error = exc if isinstance(exc, NetworkError) else NetworkError(type(exc).__name__)

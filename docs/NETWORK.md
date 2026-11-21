@@ -45,7 +45,9 @@ response.
 Method proposal deduplication is stored by method SHA-256 plus ISO cycle ID in
 the Runtime-owned Vault ledger. The first Hunter claim is authoritative; a
 different Hunter receives a duplicate result. Retries from the same Hunter are
-idempotent.
+idempotent. An already-pending method can be replayed only by the same
+cycle/hunter claim and only after Runtime revalidates the exact canonical
+method bytes and their SHA-256.
 
 Weekly manifests, per-Hunter reports and the aggregate report are stored in the
 existing Vault under reports/weekly/. The Home metadata cache is metadata-only
@@ -61,9 +63,11 @@ Hunters only after the Teacher peer is healthy.
 ### Runtime down
 
 Already-running Hunters persist their JSON output locally in Kaggle's private
-kernel output. The next coordinator run retrieves the output and retries
-/vorax/cycle/hunter-report. New kernels are not launched until Runtime can
-authenticate and persist the cycle state.
+kernel output. The next coordinator run obtains the durable pending-assignment
+list from Runtime, downloads the kernel output using its cycle/hunter/attempt ID,
+and retries /vorax/cycle/hunter-report. Each retry attempt has a distinct Kaggle
+kernel ID, so a later attempt cannot overwrite a previous report. New kernels
+are not launched until Runtime can authenticate and persist the cycle state.
 
 ### GitHub down
 
@@ -75,7 +79,9 @@ the snapshot is marked stale and never treated as a fresh Home read.
 ### Kaggle down
 
 No child is marked running unless the Runtime accepted the status transition.
-A failed push is recorded as a failure, with one retry after 24 hours.
+A failed push is recorded as a failure, with one retry after 24 hours. The
+coordinator reconciles all active ISO-week manifests and dispatches no more than
+three queued hunter kernels per run, prioritizing due retries from earlier weeks.
 
 No failure path writes directly to Home main or the Vault verified namespace.
 

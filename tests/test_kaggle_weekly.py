@@ -65,6 +65,23 @@ class KaggleWeeklyHunterTests(unittest.TestCase):
         self.assertEqual(set(CONNECTOR.SLICE_QUERIES), {"text-docs", "vision-audio", "video-tools"})
         self.assertTrue(all("VORAX_X" not in query for query in CONNECTOR.SLICE_QUERIES.values()))
 
+    def test_local_circuit_breaker_opens_after_five_failures(self):
+        breaker = CONNECTOR.LocalCircuitBreaker()
+        host = "teacher.example"
+        for _ in range(5):
+            breaker.record_failure(host)
+        with self.assertRaises(CONNECTOR.ConnectorError):
+            breaker.before_request(host)
+
+    def test_local_circuit_breaker_resets_after_cooldown_probe(self):
+        breaker = CONNECTOR.LocalCircuitBreaker()
+        host = "teacher.example"
+        breaker.open_until[host] = 0
+        breaker.failures[host] = __import__("collections").deque([1.0] * 5)
+        breaker.before_request(host)
+        self.assertNotIn(host, breaker.open_until)
+        self.assertNotIn(host, breaker.failures)
+
 
 if __name__ == "__main__":
     unittest.main()

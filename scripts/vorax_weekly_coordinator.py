@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Running "python scripts/vorax_weekly_coordinator.py" places scripts/ on
@@ -104,8 +105,8 @@ def _runtime_request(runtime_url: str, child_key: str, path: str, payload: dict 
     return result
 
 
-def _kernel_ref(username: str, discovery_slice: str) -> str:
-    return f"{username}/vorax-hunter-{discovery_slice}"
+def _kernel_ref(username: str, discovery_slice: str, cycle_id: str, attempt: int) -> str:
+    return f"{username}/vorax-hunter-{discovery_slice}-{cycle_id.lower()}-a{attempt}"
 
 
 def recover_cached_reports(
@@ -115,11 +116,38 @@ def recover_cached_reports(
     cycle_id: str,
     work_dir: Path,
 ) -> int:
-    """Recover report files from prior Kaggle outputs when Runtime delivery failed."""
+    """Recover cached reports for every Vault-tracked cycle with an undelivered hunter report."""
+    try:
+        pending = _runtime_request(runtime_url, child_key, "/vorax/cycle/pending")
+    except Exception as exc:
+        print("cached_report_scan_unavailable=" + type(exc).__name__)
+        return 0
+
     recovered = 0
-    for hunter_id, discovery_slice in HUNTER_SLICES:
-        kernel_ref = _kernel_ref(username, discovery_slice)
-        output_dir = work_dir / ("recover-" + hunter_id)
+    assignments = pending.get("pending_reports", [])
+    if not isinstance(assignments, list):
+        print("cached_report_scan_invalid_response=true")
+        return 0
+
+    for assignment in assignments[:300]:
+        if not isinstance(assignment, dict):
+            continue
+        pending_cycle = assignment.get("cycle_id")
+        hunter_id = assignment.get("hunter_id")
+        discovery_slice = assignment.get("discovery_slice")
+        attempt = assignment.get("attempt", 0)
+        if (
+            not isinstance(pending_cycle, str)
+            or not isinstance(hunter_id, str)
+            or not isinstance(discovery_slice, str)
+            or hunter_id not in {"hunter-1", "hunter-2", "hunter-3"}
+            or discovery_slice not in {"text-docs", "vision-audio", "video-tools"}
+            or isinstance(attempt, bool)
+            or attempt not in {0, 1}
+        ):
+            continue
+        kernel_ref = _kernel_ref(username, discovery_slice, pending_cycle, attempt)
+        output_dir = work_dir / ("recover-" + pending_cycle.lower() + "-" + hunter_id)
         output_dir.mkdir(parents=True, exist_ok=True)
         command = [
             "kaggle", "kernels", "output", kernel_ref,
@@ -145,32 +173,55 @@ def recover_cached_reports(
             except (OSError, json.JSONDecodeError):
                 continue
             if (
-                report.get("cycle_id") != cycle_id
+                report.get("cycle_id") != pending_cycle
                 or report.get("hunter_id") != hunter_id
+                or report.get("attempt", 0) != attempt
                 or report.get("runtime_delivery", {}).get("status") != "pending_retry"
             ):
                 continue
-            attempt = report.get("attempt", 0)
             try:
                 receipt = _runtime_request(
                     runtime_url,
                     child_key,
                     "/vorax/cycle/hunter-report",
                     {
-                        "cycle_id": cycle_id,
+                        "cycle_id": pending_cycle,
                         "hunter_id": hunter_id,
                         "attempt": attempt,
                         "report": report,
                     },
                 )
                 print(
-                    f"recovered hunter={hunter_id} cycle={cycle_id} "
+                    f"recovered hunter={hunter_id} cycle={pending_cycle} "
                     f"runtime_status={receipt.get('status')}"
                 )
                 recovered += 1
             except Exception as exc:
-                print("cached_report_delivery_pending hunter=" + hunter_id + " reason=" + type(exc).__name__)
+                print(
+                    "cached_report_delivery_pending cycle=" + pending_cycle
+                    + " hunter=" + hunter_id + " reason=" + type(exc).__name__
+                )
             break
+    # Reconcile every non-terminal ISO-week manifest after report downloads. This
+    # advances due 24-hour retries and resumes cycles paused on Teacher outages.
+    cycles = pending.get("reconcile_cycles", [])
+    if isinstance(cycles, list):
+        for item in cycles[:1000]:
+            cycle = item.get("cycle_id") if isinstance(item, dict) else None
+            if not isinstance(cycle, str):
+                continue
+            try:
+                result = _runtime_request(
+                    runtime_url,
+                    child_key,
+                    "/vorax/cycle/start",
+                    {"cycle_id": cycle, "hunter_count": 3},
+                )
+                print(
+                    f"reconciled cycle={cycle} status={result.get('status')}"
+                )
+            except Exception as exc:
+                print("cycle_reconcile_pending cycle=" + cycle + " reason=" + type(exc).__name__)
     return recovered
 
 
@@ -224,7 +275,10 @@ raise SystemExit(main())
 '''
     (folder / "hunter.py").write_text(wrapper, encoding="utf-8")
     metadata = {
-        "id": f"{username}/vorax-hunter-{discovery_slice}",
+        "id": (
+            f"{username}/vorax-hunter-{discovery_slice}-"
+            f"{cycle_id.lower()}-a{int(assignment.get('attempt', 0))}"
+        ),
         "code_file": "hunter.py",
         "language": "python",
         "kernel_type": "script",
@@ -344,7 +398,8 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="vorax-weekly-") as temp:
         temp_root = Path(temp)
-        recover_cached_reports(runtime_url, child_key, username, cycle_id, temp_root)
+        recovered = recover_cached_reports(runtime_url, child_key, username, cycle_id, temp_root)
+        print(f"recovered_cached_reports={recovered}")
 
         # Do not dispatch new work unless Runtime explicitly confirms its Vault,
         # Home metadata and required gateway credentials are ready.
@@ -352,7 +407,7 @@ def main() -> int:
         if runtime_health.get("service") != "runtime" or runtime_health.get("ready") is not True:
             raise SystemExit("Runtime is not ready; no new Kaggle hunters were launched.")
 
-        # Start is idempotent. Runtime stores the manifest and owns every Vault write.
+        # Start or resume the current ISO week. This creates no learning itself.
         try:
             response = start_runtime_cycle(
                 runtime_url,
@@ -371,32 +426,61 @@ def main() -> int:
             f"curriculum_task={(manifest.get('curriculum_task') or {}).get('id')}"
         )
         if cycle_status in {"paused_teacher", "retry_scheduled", "complete", "failed"}:
-            print("No hunters dispatched; Runtime reports a paused or terminal cycle.")
-            return 0
+            # Other older cycles can still contain due retries, so query the queue
+            # below rather than assuming the current cycle is the only active work.
+            print("Current cycle is paused or terminal; checking other due cycles.")
 
-        curriculum_task = manifest.get("curriculum_task")
-        queued = [
-            item for item in manifest.get("hunter_assignments", [])
-            if item.get("status") == "queued"
-        ]
-        if not queued:
-            print("No queued hunters; active workers are left undisturbed.")
-            return 0
+        try:
+            queue = _runtime_request(runtime_url, child_key, "/vorax/cycle/pending")
+        except Exception as exc:
+            raise SystemExit("Runtime work queue could not be read: " + type(exc).__name__)
+        queued = queue.get("queued_hunters", [])
+        if not isinstance(queued, list):
+            raise SystemExit("Runtime returned an invalid queued-hunter list")
+        # Recover retries before new work, and never launch more than the three
+        # configured Hunter slices in one coordinator run.
+        queued = sorted(
+            queued,
+            key=lambda item: (
+                -int(item.get("retry_count", 0)) if isinstance(item, dict) else 0,
+                str(item.get("cycle_created_at", "")) if isinstance(item, dict) else "",
+                str(item.get("cycle_id", "")) if isinstance(item, dict) else "",
+                str(item.get("hunter_id", "")) if isinstance(item, dict) else "",
+            ),
+        )
 
         results = []
-        for assignment in queued:
+        for assignment in queued[:3]:
+            if not isinstance(assignment, dict):
+                results.append(False)
+                continue
+            queued_cycle = assignment.get("cycle_id")
+            hunter_id = assignment.get("hunter_id")
+            discovery_slice = assignment.get("discovery_slice")
+            attempt = assignment.get("attempt", 0)
+            if (
+                not isinstance(queued_cycle, str)
+                or hunter_id not in {"hunter-1", "hunter-2", "hunter-3"}
+                or discovery_slice not in {"text-docs", "vision-audio", "video-tools"}
+                or isinstance(attempt, bool)
+                or attempt not in {0, 1}
+            ):
+                results.append(False)
+                continue
+            curriculum_task = assignment.get("curriculum_task")
             results.append(dispatch_hunter(
                 runtime_url,
                 child_key,
                 username,
                 assignment,
-                cycle_id,
+                queued_cycle,
                 curriculum_task,
                 connector_path,
                 temp_root,
             ))
         print(
-            f"cycle={cycle_id} dispatched={sum(results)} "
+            f"queue_cycles_reconciled={queue.get('reconcile_count', 0)} "
+            f"queued={len(queued)} dispatch_limit=3 dispatched={sum(results)} "
             f"dispatch_failed={len(results)-sum(results)}"
         )
         return 0 if all(results) else 1

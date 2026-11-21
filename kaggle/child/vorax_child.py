@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+from collections import deque
 import os
 import re
 import signal
@@ -55,6 +56,39 @@ class HunterTimeout(TimeoutError):
 
 class ConnectorError(RuntimeError):
     pass
+
+
+class LocalCircuitBreaker:
+    """Per-peer breaker: open after five failures in ten minutes for 60 seconds."""
+
+    def __init__(self):
+        self.failures: dict[str, deque[float]] = {}
+        self.open_until: dict[str, float] = {}
+
+    def before_request(self, host: str) -> None:
+        now = time.monotonic()
+        if now < self.open_until.get(host, 0.0):
+            raise ConnectorError("Network circuit is open for peer " + host)
+        if host in self.open_until:
+            self.open_until.pop(host, None)
+            self.failures.pop(host, None)
+
+    def record_failure(self, host: str) -> None:
+        now = time.monotonic()
+        history = self.failures.setdefault(host, deque())
+        cutoff = now - 600
+        while history and history[0] < cutoff:
+            history.popleft()
+        history.append(now)
+        if len(history) >= 5:
+            self.open_until[host] = now + 60
+
+    def record_success(self, host: str) -> None:
+        self.failures.pop(host, None)
+        self.open_until.pop(host, None)
+
+
+NETWORK_BREAKER = LocalCircuitBreaker()
 
 
 def kaggle_secret(name: str, required: bool = False) -> str:
@@ -116,6 +150,7 @@ def request_json(
     host = urllib.parse.urlparse(base_url).netloc
     last_error = None
     for attempt in range(1, attempts + 1):
+        NETWORK_BREAKER.before_request(host)
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read(3 * 1024 * 1024 + 1)
@@ -124,6 +159,7 @@ def request_json(
                 decoded = json.loads(raw.decode("utf-8"))
                 if not isinstance(decoded, dict):
                     raise ConnectorError("Remote service returned an unexpected JSON shape")
+                NETWORK_BREAKER.record_success(host)
                 print(json.dumps({
                     "event": "network_request",
                     "request_id": request_id,
@@ -136,6 +172,11 @@ def request_json(
                 return response.status, decoded
         except urllib.error.HTTPError as exc:
             last_error = ConnectorError(f"Remote service returned HTTP {exc.code}")
+            retryable = exc.code in {408, 425, 429} or exc.code >= 500
+            if retryable:
+                NETWORK_BREAKER.record_failure(host)
+            else:
+                NETWORK_BREAKER.record_success(host)
             print(json.dumps({
                 "event": "network_request",
                 "request_id": request_id,
@@ -145,10 +186,11 @@ def request_json(
                 "status": exc.code,
                 "attempt": attempt,
             }))
-            if exc.code not in {408, 425, 429} and exc.code < 500:
+            if not retryable:
                 break
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ConnectorError) as exc:
             last_error = exc if isinstance(exc, ConnectorError) else ConnectorError(type(exc).__name__)
+            NETWORK_BREAKER.record_failure(host)
             print(json.dumps({
                 "event": "network_request",
                 "request_id": request_id,
@@ -570,6 +612,9 @@ def main() -> int:
                     "triggers": cycle_task.get("triggers"),
                     "inputs": cycle_task.get("inputs"),
                     "mandatory_test_vectors": cycle_task.get("tests"),
+                    "operation_chain": cycle_task.get("operation_chain"),
+                    "ordered_inputs": cycle_task.get("ordered_inputs"),
+                    "curriculum_kind": cycle_task.get("curriculum_kind"),
                 }, ensure_ascii=False)
             else:
                 task_input = ""
@@ -632,6 +677,32 @@ def main() -> int:
         report["capability_assessments"] = assessments
         if not discovered:
             raise ConnectorError("Teacher discovery returned no metadata for the assigned slice")
+        home_metadata_text = " ".join(
+            str(value)
+            for record in home_index.get("records", [])
+            if isinstance(record, dict)
+            for value in (
+                record.get("id", ""),
+                record.get("domain", ""),
+                record.get("task", ""),
+                *(record.get("triggers", []) if isinstance(record.get("triggers"), list) else []),
+            )
+        ).casefold()
+        discovered_gaps = []
+        for assessment in assessments:
+            capability = assessment.get("capability_or_task")
+            source_type = assessment.get("source_type")
+            if not isinstance(capability, str) or not isinstance(source_type, str):
+                continue
+            slug = re.sub(r"[^a-z0-9]+", "_", capability.casefold()).strip("_")[:64]
+            if slug and slug.replace("_", " ") not in home_metadata_text:
+                discovered_gaps.append(f"capability.{source_type}.{slug}")
+        report["missing_X_list"] = list(dict.fromkeys(
+            report["missing_X_list"] + discovered_gaps
+        ))[:100]
+        report["next_priority"] = list(dict.fromkeys(
+            report["next_priority"] + discovered_gaps
+        ))[:100]
         # Reaching the configured page cap is a successful bounded discovery pass.
         # The next weekly cycle starts fresh and records any remaining pages again.
 
@@ -668,6 +739,9 @@ def main() -> int:
                 "Return exactly one JSON method object. Use only registered deterministic V-Lang operations; "
                 "do not use CALL TOOL. Include every mandatory test vector exactly as supplied and may add "
                 "more tests. Use the exact assigned id, domain, task, input schema and triggers. "
+                "When operation_chain and ordered_inputs are supplied, use every operation in that exact "
+                "order and preserve the specified input/step reference order; do not add, omit, reorder or "
+                "substitute operations. "
                 "No code, shell, URLs, secrets, weights, model configs, guessed tool outputs or fake media claims. "
                 "The trusted Runtime independently executes all declared tests.\n"
                 "Assigned task specification:\n" + task_input

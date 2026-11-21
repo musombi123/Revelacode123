@@ -925,3 +925,36 @@ def pending_method_ids() -> set[str]:
         if isinstance(entry, dict) and isinstance(entry.get("id"), str):
             result.add(entry["id"])
     return result
+
+
+
+def list_weekly_cycle_manifests(limit: int = 500) -> list[dict]:
+    """Runtime-only bounded scan of weekly cycle manifests in the existing Vault."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise VaultError("Weekly manifest scan limit must be between 1 and 1000")
+    api, repo = _client()
+    try:
+        paths = list(api.list_repo_files(repo_id=repo, repo_type="dataset"))
+    except Exception as exc:
+        raise VaultError("Runtime could not list weekly manifests in the private Vault") from exc
+    manifest_paths = sorted(
+        (
+            path for path in paths
+            if isinstance(path, str)
+            and re.fullmatch(r"reports/weekly/manifests/\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])\.json", path)
+        ),
+        reverse=True,
+    )[:limit]
+    manifests = []
+    for path in manifest_paths:
+        try:
+            value = json.loads(_read_file(api, repo, path).decode("utf-8"))
+        except Exception as exc:
+            raise VaultError("Runtime found a weekly manifest it could not read") from exc
+        if not isinstance(value, dict) or not isinstance(value.get("cycle_id"), str):
+            raise VaultError("Weekly manifest failed its identity schema")
+        expected = f"reports/weekly/manifests/{value['cycle_id']}.json"
+        if expected != path or not re.fullmatch(r"\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])", value["cycle_id"]):
+            raise VaultError("Weekly manifest path does not match its cycle ID")
+        manifests.append(value)
+    return manifests
