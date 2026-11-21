@@ -22,7 +22,7 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn("canonical SHA-256", readme)
         self.assertIn("pull request", readme)
         self.assertIn("merged=true", readme)
-        self.assertIn("never updates `main` directly", readme)
+        self.assertIn("writes directly to Home `main`", readme)
 
     def test_adapters_use_supported_gradio_server_mode_and_preserve_fastapi_routes(self):
         for relative in (
