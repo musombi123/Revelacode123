@@ -20,6 +20,9 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn("sdk: gradio", readme)
         self.assertIn("GitHub Home", readme)
         self.assertIn("canonical SHA-256", readme)
+        self.assertIn("pull request", readme)
+        self.assertIn("merged=true", readme)
+        self.assertIn("never updates `main` directly", readme)
 
     def test_adapters_use_supported_gradio_server_mode_and_preserve_fastapi_routes(self):
         for relative in (
