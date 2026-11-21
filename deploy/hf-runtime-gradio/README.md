@@ -31,11 +31,11 @@ VORAX is not a model and is not limited to model reasoning:
 1. Teacher proposes a candidate procedure. A model response is only an untrusted proposal.
 2. Runtime verifies the signed Teacher response, checks provenance and executes every declared test through the shared V-Lang interpreter.
 3. Passing candidates are written only to `vlang/pending/` in the existing private Dataset Vault.
-4. Runtime commits the verified method body and metadata-only index together to GitHub Home using a non-forced update of `main`.
-5. The Home metadata-only index is refreshed and must confirm the exact method ID, task metadata and canonical SHA-256.
-6. Runtime promotes a pending Vault method only after that exact metadata confirmation.
+4. Runtime creates an isolated `vorax/proposals/` branch containing the verified method body and matching metadata-only index, then opens a pull request against Home's configured base branch. It never updates `main` directly.
+5. A pending proposal remains in Vault until its exact Home pull request is closed with `merged=true` into the configured base branch. Runtime verifies the canonical GitHub PR record.
+6. Runtime then confirms the exact method ID, domain, task, triggers and canonical SHA-256 in Home's merged metadata-only index before promoting the existing Vault-pending bytes.
 
-Runtime never downloads executable method bodies from Home. It loads only the method body already stored in the Vault after Home's metadata confirms approval. Failed or conflicting Home writes stay pending; Runtime never force-pushes.
+Runtime never downloads executable method bodies from Home. It loads only the method body already stored in the Vault after both the merged-PR proof and exact Home metadata digest are confirmed. Unmerged, closed-without-merge, wrong-base, unavailable or conflicting proposals remain pending. Runtime never force-pushes or writes directly to Home `main`.
 
 ## Hosting, compute and storage policy
 
