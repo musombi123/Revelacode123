@@ -90,6 +90,14 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn('"VORAX_ALLOW_BILLABLE_INFERENCE": "false"', source)
         self.assertNotIn('space_hardware="cpu-basic"', source)
 
+    def test_deploy_script_adds_repository_root_before_importing_vorax(self):
+        source = self._read("scripts/deploy_hf_zerogpu_children.py")
+        root_line = source.index('ROOT = Path(__file__).resolve().parents[1]')
+        path_line = source.index('sys.path.insert(0, str(ROOT))')
+        vault_import = source.index('from vorax.vault import inspect_vault')
+        self.assertLess(root_line, path_line)
+        self.assertLess(path_line, vault_import)
+
     def test_existing_docker_deployment_path_remains_present(self):
         self.assertTrue((ROOT / "deploy/hf-teacher/Dockerfile").is_file())
         self.assertTrue((ROOT / "deploy/hf-runtime/Dockerfile").is_file())
