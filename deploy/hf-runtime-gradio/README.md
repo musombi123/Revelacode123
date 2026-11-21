@@ -31,17 +31,19 @@ VORAX is not a model and is not limited to model reasoning:
 1. Teacher proposes a candidate procedure. A model response is only an untrusted proposal.
 2. Runtime verifies the signed Teacher response, checks provenance and executes every declared test through the shared V-Lang interpreter.
 3. Passing candidates are written only to `vlang/pending/` in the existing private Dataset Vault.
-4. Runtime opens a GitHub Home pull request with the method proposal and metadata-only index update.
-5. Home review and merge are the approval authority.
-6. Runtime promotes a pending Vault method only after Home's metadata index matches the exact method ID, task metadata and canonical SHA-256.
+4. Runtime commits the verified method body and metadata-only index together to GitHub Home using a non-forced update of `main`.
+5. The Home metadata-only index is refreshed and must confirm the exact method ID, task metadata and canonical SHA-256.
+6. Runtime promotes a pending Vault method only after that exact metadata confirmation.
 
-Runtime never downloads executable method bodies from Home. It loads only the method body already stored in the Vault after Home's metadata confirms approval.
+Runtime never downloads executable method bodies from Home. It loads only the method body already stored in the Vault after Home's metadata confirms approval. Failed or conflicting Home writes stay pending; Runtime never force-pushes.
 
 ## Hosting, compute and storage policy
 
 - This Space uses Gradio SDK with the free `zero-a10g` hosting flavor for eligible free personal accounts.
-- Gradio Server mode preserves the original FastAPI endpoints and registers Runtime startup reconciliation before serving.
-- No GPU function is used. V-Lang procedures, Home-index reads and Vault reconciliation use CPU/network/storage operations; no GPU time is requested.
+- Gradio Server mode preserves the original FastAPI routes and registers Runtime startup Vault/Home reconciliation before serving.
+- ZeroGPU requires a registered `@spaces.GPU` handler. This Space registers a private child-authenticated compatibility probe; ordinary Runtime routes never invoke it and perform no GPU work.
+- The compatibility probe performs no CUDA, model loading, training or inference. It requests a one-second ZeroGPU allocation only if explicitly called with the VORAX child credential.
+- V-Lang procedures, Home-index reads and Vault reconciliation use CPU/network/storage operations.
 - No model weights or local reasoning model are included.
 - `/tmp` is ephemeral. Durable V-Lang knowledge remains in the existing private Dataset Vault; GitHub Home remains the approval/source-of-truth layer.
 - Free-provider-only policy remains enabled. Billable inference is not enabled by this Space.
