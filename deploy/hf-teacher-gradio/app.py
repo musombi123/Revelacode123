@@ -11,9 +11,14 @@ from fastapi import APIRouter
 from gradio import Server
 from hf_teacher import app as service_app
 
-# Server mode is a FastAPI server with Gradio hosting support. VORAX Teacher
-# is an HTTP/metadata/remote-provider service and does not need GPU execution.
-app = Server(title="VORAX Teacher Service")
+# Gradio Server exposes FastAPI-compatible lifecycle hooks through its
+# constructor. It does not expose FastAPI.add_event_handler() on the Server
+# instance, so transfer the source router hooks at construction time.
+app = Server(
+    title="VORAX Teacher Service",
+    on_startup=list(service_app.router.on_startup),
+    on_shutdown=list(service_app.router.on_shutdown),
+)
 
 api_router = APIRouter()
 _RESERVED_SERVER_PATHS = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
@@ -24,12 +29,6 @@ for route in service_app.router.routes:
 # Include the original Teacher endpoint objects so their paths, validation,
 # authentication, response schema and OpenAPI contracts remain unchanged.
 app.include_router(api_router)
-
-# Carry over source-app lifecycle hooks before Gradio starts serving requests.
-for callback in service_app.router.on_startup:
-    app.add_event_handler("startup", callback)
-for callback in service_app.router.on_shutdown:
-    app.add_event_handler("shutdown", callback)
 
 
 @app.get("/", tags=["service"])

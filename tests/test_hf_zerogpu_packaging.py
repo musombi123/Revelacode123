@@ -46,16 +46,15 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
             self.assertNotIn("@spaces.GPU", source)
             self.assertNotIn("uvicorn.run(", source)
 
-    def test_adapters_register_source_lifecycle_hooks_before_launch(self):
+    def test_adapters_transfer_source_lifecycle_hooks_through_server_constructor(self):
         for relative in (
             "deploy/hf-teacher-gradio/app.py",
             "deploy/hf-runtime-gradio/app.py",
         ):
             source = self._read(relative)
-            self.assertIn("service_app.router.on_startup", source)
-            self.assertIn('app.add_event_handler("startup", callback)', source)
-            self.assertIn("service_app.router.on_shutdown", source)
-            self.assertIn('app.add_event_handler("shutdown", callback)', source)
+            self.assertIn("on_startup=list(service_app.router.on_startup)", source)
+            self.assertIn("on_shutdown=list(service_app.router.on_shutdown)", source)
+            self.assertNotIn("app.add_event_handler(", source)
 
     def test_runtime_declares_vault_client_dependency(self):
         requirements = self._read("deploy/hf-runtime-gradio/requirements.txt").lower()
@@ -85,7 +84,7 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn('"github_actions_verified": False', source)
         self.assertNotIn("require_green_release.py", source)
         self.assertNotIn("VORAX_RELEASE_TAG", source)
-        self.assertIn('space_hardware=ZERO_GPU', source)
+        self.assertIn("space_hardware=ZERO_GPU", source)
         self.assertIn('ZERO_GPU = "zero-a10g"', source)
         self.assertIn('"VORAX_ALLOW_BILLABLE_INFERENCE": "false"', source)
         self.assertNotIn('space_hardware="cpu-basic"', source)
