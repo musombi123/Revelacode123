@@ -18,7 +18,7 @@ This is the Teacher API hosted through Gradio Server mode on an eligible free Ze
 ## API contract
 
 - `GET /health`
-- `GET /teacher/discover?query=...&limit=...` — Hub models, Spaces, Datasets and Inference Providers catalogue metadata only.
+- `GET /teacher/discover?query=...&limit=...` — Hub models, Spaces, Datasets and Inference Providers catalogue metadata only. Model provider details are fetched by explicit model ID from the router; the unbounded global router catalogue is never downloaded. Model metadata omits large model-card payloads, and router lookups use a bounded worker pool.
 - `POST /teacher/ask` — authenticated remote Inference Providers request.
 
 ## VORAX learning boundary
