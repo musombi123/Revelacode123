@@ -19,7 +19,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .builtins import execute_learned_input
-from .github_home import GitHubHomeError, fetch_method_index, submit_template
+from .github_home import GitHubHomeError, fetch_method_index, create_home_pull_request
 from .home_index import find_duplicate
 from .store import TemplateStore
 from .vault import (
@@ -358,13 +358,13 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
             verification="runtime_tests_passed_vault_failed",
             reason=str(exc)[:240],
         )
-        raise HTTPException(503, "Method passed Runtime tests but Vault pending write failed; no Home commit was made") from exc
+        raise HTTPException(503, "Method passed Runtime tests but the Vault pending write failed; no Home proposal PR was opened") from exc
 
     home_submission = {"status": "not_submitted"}
     try:
         if not HOME_WRITE_TOKEN:
             raise GitHubHomeError("VORAX_HOME_WRITE_TOKEN is not configured")
-        submitted = submit_template(
+        submitted = create_home_pull_request(
             HOME_REPO,
             HOME_BRANCH,
             child_id,
@@ -372,49 +372,46 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
             HOME_WRITE_TOKEN,
         )
         home_submission = {
-            "status": "committed_to_home",
-            "commit_sha": submitted["commit_sha"],
-            "commit_url": submitted["commit_url"],
+            "status": "submitted_for_home_review",
+            "pr_number": submitted["pr_number"],
+            "pr_url": submitted["pr_url"],
             "branch": submitted["branch"],
+            "proposal_commit_sha": submitted["proposal_commit_sha"],
             "vault_tracking": "pending",
         }
+        try:
+            mark_pending_home_submission(
+                record["id"],
+                submitted["pr_url"],
+                submission_kind="pull_request",
+            )
+            home_submission["vault_tracking"] = "linked_to_home_pull_request"
+        except Exception as exc:
+            home_submission["vault_tracking"] = "update_failed"
+            home_submission["vault_tracking_error"] = type(exc).__name__
+
+        # This read is deliberately against the configured Home base branch,
+        # never the proposal branch. The Vault remains pending while the PR is open.
+        try:
+            merged_index, merged_index_status = _refresh_home_index(force=True)
+            if merged_index is None:
+                home_submission["index_status"] = merged_index_status.get("status")
+            else:
+                merged_reconciliation = _reconcile_home_methods(merged_index)
+                home_reconciliation = merged_reconciliation
+                if record["id"] in merged_reconciliation.get("loaded_method_ids", []):
+                    verification["home_certification"] = "confirmed_by_merged_home_index"
+                    home_submission["status"] = "merged_and_promoted"
+                else:
+                    home_submission["status"] = "submitted_for_home_review"
+        except Exception as exc:
+            # A PR is durable even if the post-submission metadata refresh is unavailable.
+            home_submission["reconciliation_error"] = type(exc).__name__
     except Exception as exc:
         home_submission = {
             "status": "pending_retry",
             "reason": type(exc).__name__,
         }
-    else:
-        # Record the direct Home commit, then confirm the exact method digest
-        # through Home's metadata-only index before promoting Vault bytes.
-        try:
-            mark_pending_home_submission(
-                record["id"],
-                submitted["commit_url"],
-                submission_kind="commit",
-            )
-            home_submission["vault_tracking"] = "linked_to_home_commit"
-        except Exception as exc:
-            home_submission["vault_tracking"] = "update_failed"
-            home_submission["vault_tracking_error"] = type(exc).__name__
-
-        try:
-            committed_index, committed_index_status = _refresh_home_index(force=True)
-            if committed_index is None:
-                home_submission["status"] = "committed_pending_index_confirmation"
-                home_submission["index_status"] = committed_index_status.get("status")
-            else:
-                committed_reconciliation = _reconcile_home_methods(committed_index)
-                home_reconciliation = committed_reconciliation
-                if record["id"] in committed_reconciliation.get("loaded_method_ids", []):
-                    verification["home_certification"] = "confirmed_by_home_index"
-                    home_submission["status"] = "committed_and_promoted"
-                else:
-                    home_submission["status"] = "committed_pending_runtime_reconciliation"
-        except Exception as exc:
-            # The Home commit is durable. A transient Vault reconciliation
-            # problem must not cause a second Home write or lose the receipt.
-            home_submission["status"] = "committed_pending_runtime_reconciliation"
-            home_submission["reconciliation_error"] = type(exc).__name__
 
     STORE.record_success(child_id)
     _log(
@@ -423,12 +420,12 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
         x=_redact_x(x_value),
         method=record["id"],
         verification=(
-            "runtime_tests_passed_home_committed"
-            if home_submission.get("commit_sha")
+            "runtime_tests_passed_home_pr_opened"
+            if home_submission.get("pr_number")
             else "runtime_tests_passed_home_submission_pending"
         ),
         method_sha256=method_sha,
-        home_commit=home_submission.get("commit_sha"),
+        home_pr=home_submission.get("pr_url"),
     )
     return {
         "status": "verified",

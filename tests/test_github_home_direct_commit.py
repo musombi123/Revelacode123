@@ -7,11 +7,11 @@ from vorax import github_home
 from vorax.home_index import build_method_index
 
 
-class GitHubHomeDirectCommitTests(unittest.TestCase):
+class GitHubHomePullRequestTests(unittest.TestCase):
     def _candidate(self):
         return {
             "version": "vlang/1",
-            "id": "learned.direct_home_test",
+            "id": "learned.pull_request_test",
             "domain": "text",
             "task": "return supplied text unchanged",
             "triggers": ["return text unchanged", "identity text procedure"],
@@ -31,11 +31,12 @@ class GitHubHomeDirectCommitTests(unittest.TestCase):
             "provenance": {"kind": "teacher", "teacher": "test"},
         }
 
-    def test_verified_candidate_is_written_with_index_in_one_home_commit(self):
+    def test_verified_candidate_is_submitted_on_isolated_branch_as_home_pr(self):
         empty_index = build_method_index([])
         index_bytes = json.dumps(empty_index).encode("utf-8")
         calls = []
-        commit_sha = "a" * 40
+        proposal_sha = "a" * 40
+        branch_names = []
 
         def fake_api(method, path, token=None, body=None):
             calls.append((method, path, body))
@@ -50,30 +51,46 @@ class GitHubHomeDirectCommitTests(unittest.TestCase):
                 }
             if method == "GET" and "/contents/templates/library/children/" in path:
                 raise github_home.GitHubHomeError("GitHub API GET failed (404): Not Found")
+            if method == "POST" and path.endswith("/git/refs"):
+                branch_names.append(body["ref"].removeprefix("refs/heads/"))
+                self.assertEqual(body["sha"], "b" * 40)
+                return {"ref": body["ref"], "object": {"sha": "b" * 40}}
             if method == "POST" and path.endswith("/git/trees"):
                 self.assertEqual(body["base_tree"], "c" * 40)
                 self.assertEqual(
                     {item["path"] for item in body["tree"]},
                     {
                         "templates/library/index.json",
-                        "templates/library/children/kaggle-child_learned_direct_home_test.vlang",
+                        "templates/library/children/kaggle-child_learned_pull_request_test.vlang",
                     },
                 )
+                written_index = next(
+                    item["content"] for item in body["tree"]
+                    if item["path"] == "templates/library/index.json"
+                )
+                indexed = json.loads(written_index)
+                self.assertEqual(indexed["methods_total"], 1)
+                self.assertEqual(indexed["records"][0]["id"], "learned.pull_request_test")
                 return {"sha": "d" * 40}
             if method == "POST" and path.endswith("/git/commits"):
                 self.assertEqual(body["tree"], "d" * 40)
                 self.assertEqual(body["parents"], ["b" * 40])
+                return {"sha": proposal_sha}
+            if method == "PATCH" and "/git/refs/heads/" in path:
+                self.assertNotEqual(path, "/repos/musombi123/RevelaCode123/git/refs/heads/main")
+                self.assertEqual(body, {"sha": proposal_sha, "force": False})
+                return {"object": {"sha": proposal_sha}}
+            if method == "POST" and path.endswith("/pulls"):
+                self.assertEqual(body["base"], "main")
+                self.assertEqual(body["head"], branch_names[0])
                 return {
-                    "sha": commit_sha,
-                    "html_url": "https://github.com/musombi123/RevelaCode123/commit/" + commit_sha,
+                    "number": 123,
+                    "html_url": "https://github.com/musombi123/RevelaCode123/pull/123",
                 }
-            if method == "PATCH" and path.endswith("/git/refs/heads/main"):
-                self.assertEqual(body, {"sha": commit_sha, "force": False})
-                return {"object": {"sha": commit_sha}}
             raise AssertionError(f"Unexpected GitHub API call: {method} {path}")
 
         with patch.object(github_home, "_api", side_effect=fake_api):
-            result = github_home.submit_template(
+            result = github_home.create_home_pull_request(
                 "musombi123/RevelaCode123",
                 "main",
                 "kaggle-child",
@@ -81,19 +98,15 @@ class GitHubHomeDirectCommitTests(unittest.TestCase):
                 "write-token",
             )
 
-        self.assertEqual(result["commit_sha"], commit_sha)
-        self.assertEqual(result["home_authority"], "committed_to_home_main")
-        self.assertEqual(result["branch"], "main")
-        self.assertFalse(any(path.endswith("/pulls") for _, path, _ in calls))
-        tree_calls = [body for method, path, body in calls if method == "POST" and path.endswith("/git/trees")]
-        self.assertEqual(len(tree_calls), 1)
-        written_index = next(
-            item["content"] for item in tree_calls[0]["tree"]
-            if item["path"] == "templates/library/index.json"
-        )
-        indexed = json.loads(written_index)
-        self.assertEqual(indexed["methods_total"], 1)
-        self.assertEqual(indexed["records"][0]["id"], "learned.direct_home_test")
+        self.assertEqual(result["pr_number"], 123)
+        self.assertEqual(result["pr_url"], "https://github.com/musombi123/RevelaCode123/pull/123")
+        self.assertEqual(result["home_authority"], "pull_request_review_and_merge_required")
+        self.assertTrue(result["branch"].startswith("vorax/proposals/kaggle-child-"))
+        self.assertFalse(any(
+            method == "PATCH" and path.endswith("/git/refs/heads/main")
+            for method, path, _ in calls
+        ))
+        self.assertTrue(any(method == "POST" and path.endswith("/pulls") for method, path, _ in calls))
 
     def test_duplicate_candidate_is_rejected_before_any_home_write(self):
         candidate = self._candidate()
@@ -118,7 +131,7 @@ class GitHubHomeDirectCommitTests(unittest.TestCase):
 
         with patch.object(github_home, "_api", side_effect=fake_api):
             with self.assertRaises(github_home.GitHubHomeError):
-                github_home.submit_template(
+                github_home.create_home_pull_request(
                     "musombi123/Revelacode123",
                     "main",
                     "kaggle-child",

@@ -16,13 +16,13 @@ VORAX is a **learning engine, not a model**. One Input X, one V-Lang, one shared
 
 | Resource | Type | Responsibility |
 |---|---|---|
-| GitHub Home | Private source repository | Authoritative V-Lang method store and metadata index; accepts atomic commits only from the verified Runtime |
+| GitHub Home | Private source repository | Authoritative V-Lang method store and metadata index; accepts reviewed knowledge proposals through pull requests |
 | Kaggle | Learning Connector | Home metadata-index read, multi-model remote Teacher panel, testable V-Lang proposals |
 | **Musombi/vorax-teacher-service** | Hugging Face Gradio/ZeroGPU Space | Metadata discovery and remote Inference Providers teacher responses |
-| **Musombi/vorax-runtime-service** | Hugging Face Gradio/ZeroGPU Space | Shared VORAX runtime, Child authentication, trusted V-Lang verification, Vault pending writes and atomic direct commits to Home |
+| **Musombi/vorax-runtime-service** | Hugging Face Gradio/ZeroGPU Space | Shared VORAX runtime, Child authentication, trusted V-Lang verification, Vault pending writes and isolated Home pull requests |
 | **Musombi/revelacode-vorax-vault** | Existing private Hugging Face Dataset | Pending/verified V-Lang, checksums, reports and real verified artifacts |
 
-Kaggle is not a GPU image worker. The Teacher calls remote provider infrastructure; it never claims Kaggle T4 use. The Runtime does not load model weights. The two Spaces are public Gradio/ZeroGPU HTTP endpoints with Child-key authentication; the Vault remains a private Dataset. The learning write path does not use GitHub Actions: Runtime writes verified methods through the GitHub API after local service-side validation. No remote Teacher inference is performed during deployment.
+Kaggle is not a GPU image worker. The Teacher calls remote provider infrastructure; it never claims Kaggle T4 use. The Runtime does not load model weights. The two Spaces are public Gradio/ZeroGPU HTTP endpoints with Child-key authentication; the Vault remains a private Dataset. Runtime creates an isolated proposal branch and pull request for each verified method; it never updates Home main directly. Vault promotion waits until the merged main metadata index confirms the exact method digest. Required trusted CI and human review must pass before merge. No remote Teacher inference is performed during deployment.
 
 ## Hugging Face implementation
 
@@ -36,13 +36,13 @@ See **docs/vorax/huggingface-services.md** for service routes, secrets, deployme
 
 The legacy **.github/workflows/deploy-hf-child.yml** is not the deployment path for the two-service architecture. Do not reuse the old **Musombi/revelacode-vorax-child** Space or overwrite unrelated Spaces.
 
-The deployment script never creates or converts a Dataset. It verifies the existing **Musombi/revelacode-vorax-vault** as a private Dataset, checks for model weights/architecture configs, uploads the two Gradio/ZeroGPU Space contexts, and tests health/metadata/Runtime identity routes. A real multi-model teacher run is performed only by an explicitly started Kaggle learning session. Manual local deployment approval is supported; GitHub Actions are not required.
+The deployment script never creates or converts a Dataset. It verifies the existing **Musombi/revelacode-vorax-vault** as a private Dataset, checks for model weights/architecture configs, uploads the two Gradio/ZeroGPU Space contexts, and tests health/metadata/Runtime identity routes. A real multi-model teacher run is performed only by an explicitly started Kaggle learning session. Manual local deployment approval is supported for deployment only; it does not substitute for trusted CI evidence on knowledge pull requests.
 
 ## Trust and Vault policy
 
-Children send proposals to the authenticated Runtime; they never receive a GitHub write token. Runtime accepts only Teacher-signed candidates, reruns schema validation and every declared test in the trusted V-Lang interpreter, checks duplicates against Home's metadata index, and writes the passing candidate to Vault pending. Runtime then atomically commits the V-Lang method and updated metadata-only index to Home's **main** branch in one Git commit. This deliberately replaces the knowledge-submission PR/review step; it does not allow arbitrary Python or shell code. The Home commit is authoritative. Runtime re-reads the metadata-only index and promotes the Vault-pending bytes only when ID, domain, task, triggers and canonical SHA-256 all match.
+Children send proposals to the authenticated Runtime; they never receive a GitHub write token. Runtime accepts only Teacher-signed candidates, reruns schema validation and every declared test in the trusted V-Lang interpreter, checks duplicates against Home's metadata index, and writes the passing candidate to Vault pending. Runtime creates an isolated Home proposal branch containing the V-Lang method and matching metadata-only index, then opens a pull request against **main**. Home review and trusted CI are mandatory; Runtime never writes directly to the base branch. The candidate remains in Vault pending while the PR is open. After merge, Runtime re-reads main's metadata-only index and promotes the Vault-pending bytes only when ID, domain, task, triggers and canonical SHA-256 all match.
 
-Only the Runtime Service can write a Runtime-verified pending method to the Vault or commit an accepted method to Home. Runtime accepts only Teacher responses signed with the shared private `VORAX_TEACHER_ATTESTATION_KEY`; this signing key and the GitHub Home write token remain server-side and are never given to Kaggle. Teacher and Kaggle do not write directly to Vault or GitHub Home. Home sends Children only **templates/library/index.json** metadata summaries; no Home V-Lang method bodies are pulled into Children. No weights, **hf-model/**, or model architecture **config.json** belong in Vault. PNG/WAV/MP4 are UNKNOWN until real remote outputs pass format verification and independent SHA-256 calculation.
+Only the Runtime Service can write a Runtime-verified pending method to the Vault or open a Home proposal pull request. Runtime accepts only Teacher responses signed with the shared private `VORAX_TEACHER_ATTESTATION_KEY`; this signing key and the GitHub Home write token remain server-side and are never given to Kaggle. Teacher and Kaggle do not write directly to Vault or GitHub Home. Home sends Children only **templates/library/index.json** metadata summaries; no Home V-Lang method bodies are pulled into Children. No weights, **hf-model/**, or model architecture **config.json** belong in Vault. PNG/WAV/MP4 are UNKNOWN until real remote outputs pass format verification and independent SHA-256 calculation.
 
 ## Local verification
 
