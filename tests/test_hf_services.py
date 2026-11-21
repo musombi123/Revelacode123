@@ -432,7 +432,7 @@ class RuntimeServiceTests(unittest.TestCase):
                 hf_runtime._verify_teacher_attestation(response, attestation, "acme/example")
         self.assertEqual(caught.exception.status_code, 403)
 
-    def test_verified_candidate_is_not_added_to_runtime_catalog_before_home_merge(self):
+    def test_verified_candidate_commits_to_home_and_promotes_only_after_index_confirmation(self):
         candidate = {
             "version": "vlang/1",
             "id": "learned.reverse_text",
@@ -448,27 +448,56 @@ class RuntimeServiceTests(unittest.TestCase):
             ],
             "provenance": {"kind": "teacher", "teacher": "test-teacher"},
         }
+        from vorax.home_index import build_method_index
+
+        committed_record = dict(candidate)
+        committed_record["provenance"] = {
+            "kind": "teacher",
+            "child_id": "kaggle-child",
+            "teacher": "acme/example",
+        }
+        committed_index = build_method_index([committed_record])
+        no_promotions = {
+            "status": "no_home_merged_pending_methods",
+            "promoted_methods": [],
+        }
+        promoted = {
+            "status": "promoted",
+            "promoted_methods": [committed_record],
+        }
+        empty_index = {
+            "version": "vorax-home-method-index/v1",
+            "methods_total": 30,
+            "records": [],
+        }
         with patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
-             patch.object(hf_runtime, "_reconcile_home_methods", return_value={
-                 "status": "no_home_merged_pending_methods", "methods_loaded_into_runtime": 0,
-             }), \
+             patch.object(hf_runtime, "promote_pending_home_methods", side_effect=[no_promotions, promoted]), \
              patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \
              patch.object(hf_runtime, "write_pending_method", return_value={"status": "written_pending"}), \
              patch.object(hf_runtime, "submit_template", return_value={
-                 "pull_request": "https://github.com/musombi123/Revelacode123/pull/999",
-                 "number": 999, "branch": "child/kaggle-child/test",
+                 "commit_sha": "a" * 40,
+                 "commit_url": "https://github.com/musombi123/Revelacode123/commit/" + "a" * 40,
+                 "branch": "main",
              }), \
-             patch.object(hf_runtime, "mark_pending_home_submission"), \
-             patch.object(hf_runtime, "_refresh_home_index", return_value=({
-                 "version": "vorax-home-method-index/v1", "methods_total": 30, "records": [],
-             }, {"status": "metadata_index_read", "methods_total": 30})), \
-             patch.object(hf_runtime.STORE, "add", side_effect=AssertionError("pending must not enter executable catalogue")), \
+             patch.object(hf_runtime, "mark_pending_home_submission") as mark_home, \
+             patch.object(hf_runtime, "_refresh_home_index", side_effect=[
+                 (empty_index, {"status": "metadata_index_read", "methods_total": 30}),
+                 (committed_index, {"status": "metadata_index_read", "methods_total": 31}),
+             ]), \
+             patch.object(hf_runtime.STORE, "add") as add_method, \
              patch.object(hf_runtime.STORE, "record_success"):
             result = hf_runtime._verify_and_submit(candidate, "kaggle-child", "acme/example", "reverse text")
         self.assertEqual(result["status"], "verified")
-        self.assertEqual(result["verification"]["home_certification"], "pending")
+        self.assertEqual(result["verification"]["home_certification"], "confirmed_by_home_index")
         self.assertIs(result["verification"]["child_self_certification"], False)
-        self.assertEqual(result["home_submission"]["status"], "submitted_for_home_review")
+        self.assertEqual(result["home_submission"]["status"], "committed_and_promoted")
+        self.assertEqual(result["home_submission"]["commit_sha"], "a" * 40)
+        mark_home.assert_called_once_with(
+            candidate["id"],
+            "https://github.com/musombi123/Revelacode123/commit/" + "a" * 40,
+            submission_kind="commit",
+        )
+        add_method.assert_called_once_with(committed_record)
 
 
 class VaultProtectionTests(unittest.TestCase):

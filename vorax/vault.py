@@ -413,19 +413,34 @@ def write_pending_method(record: dict, *, child_id: str, verification: dict) -> 
     }
 
 
-def mark_pending_home_submission(method_id: str, pull_request: str) -> dict:
-    """Attach a Home PR URL to the pending Vault record without promoting it to verified."""
+def mark_pending_home_submission(
+    method_id: str,
+    home_reference: str,
+    *,
+    submission_kind: str = "pull_request",
+) -> dict:
+    """Attach a Home commit/PR receipt without bypassing metadata-index promotion."""
+    if submission_kind not in {"commit", "pull_request"}:
+        raise VaultError("Unsupported Home submission receipt type")
     api, repo = _client()
     pending = _read_json(api, repo, "vlang/pending/index.json", {"version": "vlang-index/1", "records": []})
     records = pending.get("records", [])
     entry = next((item for item in records if isinstance(item, dict) and item.get("id") == method_id), None)
     if entry is None:
         raise VaultError("Pending method was not found in the Vault index")
-    entry["home_pr"] = pull_request
-    entry["status"] = "submitted_for_home_review"
+
     report_path = entry.get("verification_report")
     report = _read_json(api, repo, report_path, {}) if report_path else {}
-    report["home_pr"] = pull_request
+    if submission_kind == "commit":
+        entry["home_commit"] = home_reference
+        entry["status"] = "committed_to_home"
+        report["home_commit"] = home_reference
+        status = "committed_to_home"
+    else:
+        entry["home_pr"] = home_reference
+        entry["status"] = "submitted_for_home_review"
+        report["home_pr"] = home_reference
+        status = "submitted_for_home_review"
     report["home_certification"] = "pending"
     report_raw = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
     pending_raw = json.dumps(pending, indent=2, ensure_ascii=False).encode("utf-8")
@@ -433,11 +448,14 @@ def mark_pending_home_submission(method_id: str, pull_request: str) -> dict:
     checksums = checksum_doc.setdefault("files", {})
     checksums[report_path] = hashlib.sha256(report_raw).hexdigest()
     checksums["vlang/pending/index.json"] = hashlib.sha256(pending_raw).hexdigest()
-    _upload(api, repo, report_path, report_raw, "Attach Home review link to VORAX verification report")
-    _upload(api, repo, "vlang/pending/index.json", pending_raw, "Record VORAX pending method Home review state")
-    _upload(api, repo, "manifest/checksums.json", json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8"),
-            "Update VORAX Vault SHA-256 checksums")
-    return {"status": "submitted_for_home_review", "home_pr": pull_request}
+    _upload(api, repo, report_path, report_raw, "Attach Home submission receipt to VORAX verification report")
+    _upload(api, repo, "vlang/pending/index.json", pending_raw, "Record VORAX pending method Home submission state")
+    _upload(
+        api, repo, "manifest/checksums.json",
+        json.dumps(checksum_doc, indent=2, sort_keys=True).encode("utf-8"),
+        "Update VORAX Vault SHA-256 checksums",
+    )
+    return {"status": status, "home_reference": home_reference}
 
 
 def promote_pending_home_methods(home_index: dict) -> dict:
@@ -513,6 +531,7 @@ def promote_pending_home_methods(home_index: dict) -> dict:
             "size_bytes": len(canonical),
             "home_certified": True,
             "home_pr": entry.get("home_pr"),
+            "home_commit": entry.get("home_commit"),
             "promoted_at": promoted_at,
         }
         existing_entry = next((x for x in verified_records if isinstance(x, dict) and x.get("id") == method_id), None)
