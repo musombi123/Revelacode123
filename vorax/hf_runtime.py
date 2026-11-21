@@ -19,7 +19,12 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .builtins import execute_learned_input
-from .github_home import GitHubHomeError, fetch_method_index, create_home_pull_request
+from .github_home import (
+    GitHubHomeError,
+    create_home_pull_request,
+    fetch_method_index,
+    is_merged_home_pull_request,
+)
 from .home_index import find_duplicate
 from .store import TemplateStore
 from .vault import (
@@ -134,8 +139,16 @@ def _refresh_home_index(force: bool = False) -> tuple[dict | None, dict]:
 
 
 def _reconcile_home_methods(home_index: dict) -> dict:
-    """Load only Child-originated method bytes already in Vault pending after Home confirms their metadata."""
-    result = promote_pending_home_methods(home_index)
+    """Load only Vault-pending methods whose exact Home PR is merged and digest-confirmed."""
+    result = promote_pending_home_methods(
+        home_index,
+        merged_pr_verifier=lambda pr_url: is_merged_home_pull_request(
+            HOME_REPO,
+            pr_url,
+            HOME_BRANCH,
+            HOME_READ_TOKEN,
+        ),
+    )
     methods = result.pop("promoted_methods", [])
     loaded_ids = []
     if not isinstance(methods, list):
