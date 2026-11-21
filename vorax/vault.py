@@ -958,3 +958,101 @@ def list_weekly_cycle_manifests(limit: int = 500) -> list[dict]:
             raise VaultError("Weekly manifest path does not match its cycle ID")
         manifests.append(value)
     return manifests
+
+
+
+def pending_method_coverage() -> list[dict]:
+    """Return metadata-only pending coverage so weekly task selection skips equivalent work."""
+    api, repo = _client()
+    pending = _read_json(
+        api,
+        repo,
+        "vlang/pending/index.json",
+        {"version": "vlang-index/1", "records": []},
+    )
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    coverage = []
+    for entry in records:
+        if not isinstance(entry, dict):
+            continue
+        method_id = entry.get("id")
+        domain = entry.get("domain")
+        task = entry.get("task")
+        triggers = entry.get("triggers", [])
+        if (
+            not isinstance(method_id, str)
+            or not isinstance(domain, str)
+            or not isinstance(task, str)
+            or not isinstance(triggers, list)
+            or any(not isinstance(value, str) for value in triggers)
+        ):
+            raise VaultError("Vault pending method metadata is malformed")
+        coverage.append({
+            "id": method_id,
+            "domain": domain,
+            "task": task,
+            "triggers": list(triggers),
+        })
+    return coverage
+
+
+def pending_method_by_sha256(method_sha: str) -> dict | None:
+    """Read, execute and checksum one exact Runtime-pending method by canonical SHA-256."""
+    from .vlang import dump_record, parse_document, validate_template
+
+    if not isinstance(method_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", method_sha):
+        raise VaultError("Pending method lookup requires a lowercase SHA-256 digest")
+    api, repo = _client()
+    pending = _read_json(
+        api,
+        repo,
+        "vlang/pending/index.json",
+        {"version": "vlang-index/1", "records": []},
+    )
+    records = pending.get("records", [])
+    if not isinstance(records, list):
+        raise VaultError("Vault pending index has an invalid records field")
+    entry = next(
+        (
+            item for item in records
+            if isinstance(item, dict) and item.get("sha256") == method_sha
+        ),
+        None,
+    )
+    if entry is None:
+        return None
+    method_id = entry.get("id")
+    path = entry.get("path") or f"vlang/pending/{method_id}.vlang"
+    if (
+        not isinstance(method_id, str)
+        or not isinstance(path, str)
+        or not path.startswith("vlang/pending/")
+        or ".." in path.split("/")
+    ):
+        raise VaultError("Pending method index path or identity is invalid")
+    try:
+        raw = _read_file(api, repo, path)
+        parsed = parse_document(raw.decode("utf-8"))
+        if len(parsed) != 1 or parsed[0].get("id") != method_id:
+            raise VaultError("Pending method content does not match its Vault index identity")
+        record = parsed[0]
+        validate_template(record, run_tests=True)
+        canonical = dump_record(record).encode("utf-8")
+    except VaultError:
+        raise
+    except Exception as exc:
+        raise VaultError("Pending method failed trusted V-Lang revalidation") from exc
+    if (
+        hashlib.sha256(raw).hexdigest() != method_sha
+        or hashlib.sha256(canonical).hexdigest() != method_sha
+        or entry.get("sha256") != method_sha
+    ):
+        raise VaultError("Pending method canonical SHA-256 does not match its Vault index")
+    return {
+        "record": record,
+        "entry": dict(entry),
+        "path": path,
+        "method_sha256": method_sha,
+    }
