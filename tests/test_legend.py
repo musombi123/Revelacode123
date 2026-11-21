@@ -1,5 +1,6 @@
 import tempfile,unittest
 from pathlib import Path
+from unittest.mock import patch
 from vorax.tlang import parse_document,validate_template,TemplateError,execute
 from vorax.engine import compose
 from vorax.store import TemplateStore
@@ -8,6 +9,21 @@ from vorax.devour import classify_model, conduct_prompt, DiscoveryCatalog
 
 ROOT=Path(__file__).resolve().parents[1]
 SEEDS=parse_document((ROOT/"templates/library/seed.tlang").read_text(encoding="utf-8"))
+TRIANGLE_TEMPLATE=parse_document(
+    (ROOT/"templates/library/children/demo-a_geometry_triangle_area.tlang").read_text(encoding="utf-8")
+)[0]
+
+
+def _answer_text_with_test_catalog(query):
+    """Run the API text bridge against committed fixtures, never a developer's SQLite DB."""
+    with tempfile.TemporaryDirectory() as folder:
+        store=TemplateStore(str(Path(folder)/"api-test.sqlite3"))
+        for template in SEEDS:
+            store.add(template)
+        store.add(TRIANGLE_TEMPLATE)
+        with patch("vorax.api.STORE",store):
+            return _answer_text(query)
+
 
 class LegendTests(unittest.TestCase):
     def test_devour_modality_classification_and_conduct_prompt(self):
@@ -42,11 +58,11 @@ class LegendTests(unittest.TestCase):
         self.assertEqual(result["answer"],42)
         self.assertTrue(result["proof"])
     def test_openai_compatible_text_bridge_executes_supported_math(self):
-        result=_answer_text("What is 8 * 7?")
+        result=_answer_text_with_test_catalog("What is 8 * 7?")
         self.assertEqual(result["status"],"verified")
         self.assertEqual(result["answer"],56)
     def test_model_shaped_generate_text_returns_verified_procedure(self):
-        result=_answer_text("triangle area base 10 height 5")
+        result=_answer_text_with_test_catalog("triangle area base 10 height 5")
         self.assertEqual(result["status"],"verified")
         self.assertEqual(result["answer"],25)
         self.assertEqual(result["template_id"],"geometry.triangle_area")
