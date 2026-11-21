@@ -240,3 +240,54 @@ def create_home_pull_request(
         "index_file": index_path,
         "home_authority": "pull_request_review_and_merge_required",
     }
+
+
+def is_merged_home_pull_request(
+    repo: str,
+    pull_request_url: str,
+    base_branch: str,
+    token: str,
+) -> bool:
+    """Confirm a pending proposal's exact Home PR was merged into the expected base.
+
+    A matching main-branch metadata digest is necessary but not sufficient by itself:
+    Runtime also requires GitHub's canonical PR record to say merged=true, closed,
+    with the expected base and a VORAX proposal head from this same repository.
+    """
+    if not token:
+        raise GitHubHomeError("Home read credentials are required to verify a merged proposal PR")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError("Invalid Home repository")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,100}", base_branch) or ".." in base_branch.split("/"):
+        raise ValueError("Invalid Home base branch")
+
+    parsed = urllib.parse.urlparse(pull_request_url)
+    match = re.fullmatch(r"/" + re.escape(repo) + r"/pull/([1-9][0-9]*)", parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "github.com"
+        or parsed.query
+        or parsed.fragment
+        or not match
+    ):
+        raise GitHubHomeError("Vault contains an invalid Home pull request URL")
+
+    pull_number = int(match.group(1))
+    pr = _api("GET", f"/repos/{repo}/pulls/{pull_number}", token)
+    base = pr.get("base") if isinstance(pr.get("base"), dict) else {}
+    head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+    base_repo = base.get("repo") if isinstance(base.get("repo"), dict) else {}
+    head_repo = head.get("repo") if isinstance(head.get("repo"), dict) else {}
+
+    return bool(
+        pr.get("number") == pull_number
+        and pr.get("state") == "closed"
+        and pr.get("merged") is True
+        and base.get("ref") == base_branch
+        and base_repo.get("full_name", "").casefold() == repo.casefold()
+        and isinstance(head.get("ref"), str)
+        and head["ref"].startswith("vorax/proposals/")
+        and head_repo.get("full_name", "").casefold() == repo.casefold()
+        and isinstance(pr.get("merge_commit_sha"), str)
+        and re.fullmatch(r"[0-9a-f]{40}", pr["merge_commit_sha"]) is not None
+    )
