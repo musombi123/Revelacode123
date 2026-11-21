@@ -108,6 +108,67 @@ class GitHubHomePullRequestTests(unittest.TestCase):
         ))
         self.assertTrue(any(method == "POST" and path.endswith("/pulls") for method, path, _ in calls))
 
+    def test_home_pr_must_be_merged_into_the_configured_base(self):
+        merged_pr = {
+            "number": 42,
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "a" * 40,
+            "base": {
+                "ref": "main",
+                "repo": {"full_name": "musombi123/Revelacode123"},
+            },
+            "head": {
+                "ref": "vorax/proposals/kaggle-child-method",
+                "repo": {"full_name": "musombi123/Revelacode123"},
+            },
+        }
+        with patch.object(github_home, "_api", return_value=merged_pr) as api:
+            result = github_home.is_merged_home_pull_request(
+                "musombi123/Revelacode123",
+                "https://github.com/musombi123/Revelacode123/pull/42",
+                "main",
+                "read-token",
+            )
+        self.assertIs(result, True)
+        api.assert_called_once_with(
+            "GET",
+            "/repos/musombi123/Revelacode123/pulls/42",
+            "read-token",
+        )
+
+    def test_home_pr_verification_rejects_unmerged_or_wrong_base_pr(self):
+        base = {
+            "number": 42,
+            "state": "closed",
+            "merged": False,
+            "merge_commit_sha": None,
+            "base": {
+                "ref": "main",
+                "repo": {"full_name": "musombi123/Revelacode123"},
+            },
+            "head": {
+                "ref": "vorax/proposals/kaggle-child-method",
+                "repo": {"full_name": "musombi123/Revelacode123"},
+            },
+        }
+        with patch.object(github_home, "_api", return_value=base):
+            result = github_home.is_merged_home_pull_request(
+                "musombi123/Revelacode123",
+                "https://github.com/musombi123/Revelacode123/pull/42",
+                "main",
+                "read-token",
+            )
+        self.assertIs(result, False)
+
+        with self.assertRaises(github_home.GitHubHomeError):
+            github_home.is_merged_home_pull_request(
+                "musombi123/Revelacode123",
+                "https://example.com/musombi123/Revelacode123/pull/42",
+                "main",
+                "read-token",
+            )
+
     def test_duplicate_candidate_is_rejected_before_any_home_write(self):
         candidate = self._candidate()
         existing_index = build_method_index([candidate])
