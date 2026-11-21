@@ -13,7 +13,7 @@ startup_duration_timeout: 30m
 
 # VORAX Teacher Service
 
-This is the Teacher API hosted through the Gradio SDK on an eligible free ZeroGPU Space. The API contract is preserved; the Gradio launch wrapper does not replace the Teacher logic.
+This is the Teacher API hosted through Gradio Server mode on an eligible free ZeroGPU Space. The adapter does not replace Teacher logic or alter the HTTP API.
 
 ## API contract
 
@@ -25,12 +25,13 @@ This is the Teacher API hosted through the Gradio SDK on an eligible free ZeroGP
 
 The Teacher is not VORAX and does not certify knowledge. It proposes a candidate procedure from remote model reasoning. The separate VORAX Runtime validates the exact candidate using the shared V-Lang interpreter and declared tests. A passing proposal remains pending in the existing private Dataset Vault until GitHub Home accepts the matching method through its normal review/merge path.
 
-## Weight and compute policy
+## Hosting, compute and weight policy
 
+- This Space uses Gradio SDK with the free `zero-a10g` hosting flavor for eligible free personal accounts.
+- The service uses Gradio Server mode to preserve the original FastAPI endpoints and lifecycle.
+- No `spaces.GPU` function is used. Metadata and HTTP routing run on the web process; no GPU time is requested for Teacher operations.
 - No model weights are downloaded, cached, trained or hosted.
-- No local inference model is loaded.
 - Remote inference is free-provider-only by default; billable providers remain disabled.
-- The ZeroGPU platform marker is never invoked. Teacher metadata and HTTP processing run on the Space's ordinary web process; VORAX does not request GPU work.
 - Kaggle T4 is not used.
 
 ## Secrets
@@ -41,7 +42,7 @@ Configure these as Space secrets, never as repository files:
 - `HF_READ_TOKEN` — Hub metadata read permission.
 - `VORAX_CHILD_ID=kaggle-child`
 - `VORAX_KAGGLE_CHILD_API_KEY`
-- `VORAX_TEACHER_ATTESTATION_KEY` — shared with Runtime only; never put this key in Kaggle.
+- `VORAX_TEACHER_ATTESTATION_KEY` — shared with Runtime only; never put it in Kaggle.
 - `VORAX_ALLOW_BILLABLE_INFERENCE=false`
 
 The Teacher never writes to the VORAX Vault.
