@@ -43,8 +43,11 @@ class TeacherServiceTests(unittest.TestCase):
             }],
         }]
         with patch.object(hf_teacher, "_http_json", return_value=(metadata, {})) as call, \
-             patch.object(hf_teacher, "_discover_router_models", return_value=router_models):
+             patch.object(hf_teacher, "_discover_router_models", return_value=router_models) as router_lookup:
             result = hf_teacher.discover(query="example", limit=3, source="models", cursor=None)
+        router_lookup.assert_called_once_with(
+            "example", 3, model_ids=["acme/example"]
+        )
         self.assertEqual(result["status"], "metadata_only")
         self.assertEqual(result["models"], [{
             "id": "acme/example", "source_type": "model", "tags": ["text-generation"],
@@ -63,6 +66,44 @@ class TeacherServiceTests(unittest.TestCase):
         self.assertIn("search=example", call.call_args.args[0])
         self.assertIn("expand%5B%5D=inferenceProviderMapping", call.call_args.args[0])
         self.assertIn("inference_provider=all", call.call_args.args[0])
+
+    def test_model_metadata_omits_large_card_data_expansion(self):
+        with patch.object(hf_teacher, "_http_json", return_value=([], {})) as call:
+            hf_teacher._discover_kind("models", "example", 100)
+        url = call.call_args.args[0]
+        self.assertIn("limit=100", url)
+        self.assertIn("inference_provider=all", url)
+        self.assertIn("expand%5B%5D=inferenceProviderMapping", url)
+        self.assertNotIn("cardData", url)
+
+    def test_router_discovery_uses_bounded_per_model_endpoints(self):
+        model_ids = [f"acme/model-{index}" for index in range(25)]
+
+        def fake_http(url, **kwargs):
+            self.assertTrue(url.startswith(hf_teacher.HF_ROUTER_MODELS_API + "/"))
+            model_id = urllib.parse.unquote(
+                url.split(hf_teacher.HF_ROUTER_MODELS_API + "/", 1)[1]
+            )
+            return ({
+                "id": model_id,
+                "owned_by": "acme",
+                "providers": [{
+                    "provider": "provider-a",
+                    "status": "live",
+                    "is_free": True,
+                    "throughput": 10,
+                }],
+            }, {})
+
+        with patch.dict(os.environ, {"HF_TOKEN": "test-router-token"}), \
+             patch.object(hf_teacher, "_http_json", side_effect=fake_http) as call:
+            result = hf_teacher._discover_router_models(
+                "", limit=100, model_ids=model_ids
+            )
+
+        self.assertEqual(len(result), 20)
+        self.assertEqual(call.call_count, 20)
+        self.assertTrue(all(item["providers"][0]["is_free"] is True for item in result))
 
     def test_ask_uses_remote_router_and_authenticates_child(self):
         response = {"choices": [{"message": {"content": "A bounded teaching response."}}]}
