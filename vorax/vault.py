@@ -458,11 +458,12 @@ def mark_pending_home_submission(
     return {"status": status, "home_reference": home_reference}
 
 
-def promote_pending_home_methods(home_index: dict) -> dict:
-    """Promote pending methods only when Home's metadata index confirms the merged method ID.
+def promote_pending_home_methods(home_index: dict, *, merged_pr_verifier=None) -> dict:
+    """Promote only after a recorded Home PR is merged and its exact digest is indexed.
 
-    The Runtime reads the V-Lang candidate from the Vault itself. It never fetches a
-    method body from GitHub Home. Home contributes only its metadata-only index.
+    Runtime verifies the canonical GitHub PR record before the Vault checks Home's
+    metadata summary and SHA-256. The candidate bytes are read from Vault pending;
+    no executable method body is ever fetched from Home.
     """
     from .home_index import parse_method_index
     from .vlang import dump_record, parse_document
@@ -488,6 +489,17 @@ def promote_pending_home_methods(home_index: dict) -> dict:
     for entry in pending_records:
         if not isinstance(entry, dict) or entry.get("id") not in home_by_id:
             continue
+        home_pr = entry.get("home_pr")
+        if not isinstance(home_pr, str) or not home_pr.strip() or not callable(merged_pr_verifier):
+            # Legacy direct-commit receipts and unsubmitted proposals are never promotable.
+            continue
+        try:
+            if not merged_pr_verifier(home_pr):
+                continue
+        except Exception as exc:
+            raise VaultError(
+                "Home pull-request merge status could not be verified; refusing Vault promotion"
+            ) from exc
         method_id = entry["id"]
         pending_path = entry.get("path") or f"vlang/pending/{method_id}.vlang"
         raw = _read_file(api, repo, pending_path)
