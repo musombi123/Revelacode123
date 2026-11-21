@@ -24,7 +24,10 @@ class GitHubHomeDirectCommitTests(unittest.TestCase):
                 }
             ],
             "result": {"step": "answer"},
-            "tests": [{"input": {"value": "abc"}, "expect": "abc"}],
+            "tests": [
+                {"input": {"value": "abc"}, "expect": "abc"},
+                {"input": {"value": "vorax"}, "expect": "vorax"},
+            ],
             "provenance": {"kind": "teacher", "teacher": "test"},
         }
 
