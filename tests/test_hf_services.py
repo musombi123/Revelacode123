@@ -432,7 +432,7 @@ class RuntimeServiceTests(unittest.TestCase):
                 hf_runtime._verify_teacher_attestation(response, attestation, "acme/example")
         self.assertEqual(caught.exception.status_code, 403)
 
-    def test_verified_candidate_commits_to_home_and_promotes_only_after_index_confirmation(self):
+    def test_verified_candidate_opens_home_pr_and_stays_pending_until_merge(self):
         candidate = {
             "version": "vlang/1",
             "id": "learned.reverse_text",
@@ -448,56 +448,51 @@ class RuntimeServiceTests(unittest.TestCase):
             ],
             "provenance": {"kind": "teacher", "teacher": "test-teacher"},
         }
-        from vorax.home_index import build_method_index
-
-        committed_record = dict(candidate)
-        committed_record["provenance"] = {
-            "kind": "teacher",
-            "child_id": "kaggle-child",
-            "teacher": "acme/example",
-        }
-        committed_index = build_method_index([committed_record])
         no_promotions = {
             "status": "no_home_merged_pending_methods",
             "promoted_methods": [],
+            "loaded_method_ids": [],
         }
-        promoted = {
-            "status": "promoted",
-            "promoted_methods": [committed_record],
-        }
-        empty_index = {
+        home_index = {
             "version": "vorax-home-method-index/v1",
             "methods_total": 30,
             "records": [],
         }
+        pr_receipt = {
+            "pr_number": 123,
+            "pr_url": "https://github.com/musombi123/Revelacode123/pull/123",
+            "branch": "vorax/proposals/kaggle-child-learned-reverse-text",
+            "proposal_commit_sha": "a" * 40,
+        }
         with patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
-             patch.object(hf_runtime, "promote_pending_home_methods", side_effect=[no_promotions, promoted]), \
              patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \
              patch.object(hf_runtime, "write_pending_method", return_value={"status": "written_pending"}), \
-             patch.object(hf_runtime, "submit_template", return_value={
-                 "commit_sha": "a" * 40,
-                 "commit_url": "https://github.com/musombi123/Revelacode123/commit/" + "a" * 40,
-                 "branch": "main",
-             }), \
+             patch.object(hf_runtime, "create_home_pull_request", return_value=pr_receipt) as open_pr, \
              patch.object(hf_runtime, "mark_pending_home_submission") as mark_home, \
              patch.object(hf_runtime, "_refresh_home_index", side_effect=[
-                 (empty_index, {"status": "metadata_index_read", "methods_total": 30}),
-                 (committed_index, {"status": "metadata_index_read", "methods_total": 31}),
+                 (home_index, {"status": "metadata_index_read", "methods_total": 30}),
+                 (home_index, {"status": "metadata_index_read", "methods_total": 30}),
              ]), \
+             patch.object(hf_runtime, "_reconcile_home_methods", return_value=no_promotions), \
              patch.object(hf_runtime.STORE, "add") as add_method, \
              patch.object(hf_runtime.STORE, "record_success"):
-            result = hf_runtime._verify_and_submit(candidate, "kaggle-child", "acme/example", "reverse text")
+            result = hf_runtime._verify_and_submit(
+                candidate, "kaggle-child", "acme/example", "reverse text"
+            )
+
         self.assertEqual(result["status"], "verified")
-        self.assertEqual(result["verification"]["home_certification"], "confirmed_by_home_index")
         self.assertIs(result["verification"]["child_self_certification"], False)
-        self.assertEqual(result["home_submission"]["status"], "committed_and_promoted")
-        self.assertEqual(result["home_submission"]["commit_sha"], "a" * 40)
+        self.assertEqual(result["home_submission"]["status"], "submitted_for_home_review")
+        self.assertEqual(result["home_submission"]["pr_number"], 123)
+        self.assertEqual(result["home_submission"]["pr_url"], pr_receipt["pr_url"])
+        self.assertEqual(result["home_submission"]["vault_tracking"], "linked_to_home_pull_request")
+        open_pr.assert_called_once()
         mark_home.assert_called_once_with(
             candidate["id"],
-            "https://github.com/musombi123/Revelacode123/commit/" + "a" * 40,
-            submission_kind="commit",
+            pr_receipt["pr_url"],
+            submission_kind="pull_request",
         )
-        add_method.assert_called_once_with(committed_record)
+        add_method.assert_not_called()
 
 
 class VaultProtectionTests(unittest.TestCase):
