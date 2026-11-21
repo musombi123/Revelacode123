@@ -11,9 +11,15 @@ from fastapi import APIRouter
 from gradio import Server
 from vorax.hf_runtime import app as service_app
 
-# Server mode gives the Runtime full FastAPI control within the supported
-# Gradio Space process. V-Lang and bounded tools execute on CPU.
-app = Server(title="VORAX Runtime Service")
+# Gradio Server exposes FastAPI-compatible lifecycle hooks through its
+# constructor. It does not expose FastAPI.add_event_handler() on the Server
+# instance. Preserve Runtime's startup reconciliation by transferring the
+# source router hooks at construction time.
+app = Server(
+    title="VORAX Runtime Service",
+    on_startup=list(service_app.router.on_startup),
+    on_shutdown=list(service_app.router.on_shutdown),
+)
 
 api_router = APIRouter()
 _RESERVED_SERVER_PATHS = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
@@ -24,13 +30,6 @@ for route in service_app.router.routes:
 # Preserve the original Runtime route objects and all their authentication,
 # validation, request and response contracts.
 app.include_router(api_router)
-
-# Runtime startup reconciliation is part of the source application's
-# lifecycle. Register it before Gradio starts serving requests.
-for callback in service_app.router.on_startup:
-    app.add_event_handler("startup", callback)
-for callback in service_app.router.on_shutdown:
-    app.add_event_handler("shutdown", callback)
 
 
 @app.get("/", tags=["service"])
