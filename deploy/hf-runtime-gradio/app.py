@@ -26,7 +26,7 @@ app = Server(
 
 @spaces.GPU(duration=1)
 def _zerogpu_startup_compat() -> dict:
-    """ZeroGPU registration probe; no CUDA, model or inference work is performed."""
+    """ZeroGPU registration marker; returns a static value without model inference."""
     return {"status": "zerogpu_registered"}
 
 
