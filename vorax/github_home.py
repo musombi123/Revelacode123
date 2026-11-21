@@ -201,7 +201,7 @@ def create_home_pull_request(
 
     updated_ref = _api(
         "PATCH",
-        f"/repos/{repo}/git/refs/heads/{urllib.parse.quote(proposal_branch, safe='')}",
+        f"/repos/{repo}/git/refs/heads/{urllib.parse.quote(proposal_branch, safe='/')}",
         token,
         {"sha": commit_sha, "force": False},
     )
