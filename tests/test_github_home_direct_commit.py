@@ -53,7 +53,7 @@ class GitHubHomeDirectCommitTests(unittest.TestCase):
                     {item["path"] for item in body["tree"]},
                     {
                         "templates/library/index.json",
-                        "templates/library/children/kaggle-child_learned.direct_home_test.vlang",
+                        "templates/library/children/kaggle-child_learned_direct_home_test.vlang",
                     },
                 )
                 return {"sha": "d" * 40}
