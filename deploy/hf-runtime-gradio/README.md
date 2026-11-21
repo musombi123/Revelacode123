@@ -13,7 +13,7 @@ startup_duration_timeout: 30m
 
 # VORAX Runtime Service
 
-This is the VORAX Runtime Child, hosted through the Gradio SDK on an eligible free ZeroGPU Space. The existing FastAPI route contracts and shared `vorax/` package are preserved.
+This is the VORAX Runtime Child, hosted through Gradio Server mode on an eligible free ZeroGPU Space. Original FastAPI route contracts and the shared `vorax/` package are preserved.
 
 ## API contract
 
@@ -37,11 +37,12 @@ VORAX is not a model and is not limited to model reasoning:
 
 Runtime never downloads executable method bodies from Home. It loads only the method body already stored in the Vault after Home's metadata confirms approval.
 
-## Compute and storage policy
+## Hosting, compute and storage policy
 
+- This Space uses Gradio SDK with the free `zero-a10g` hosting flavor for eligible free personal accounts.
+- Gradio Server mode preserves the original FastAPI endpoints and registers Runtime startup reconciliation before serving.
+- No `spaces.GPU` function is used. V-Lang procedures, Home-index reads and Vault reconciliation use CPU/network/storage operations; no GPU time is requested.
 - No model weights or local reasoning model are included.
-- Runtime executes V-Lang procedures and bounded registered tools on CPU.
-- The ZeroGPU platform marker is never invoked; no user request is assigned to a GPU.
 - `/tmp` is ephemeral. Durable V-Lang knowledge remains in the existing private Dataset Vault; GitHub Home remains the approval/source-of-truth layer.
 - Free-provider-only policy remains enabled. Billable inference is not enabled by this Space.
 
