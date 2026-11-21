@@ -91,13 +91,13 @@ def local_release_gate(*, manual_approval: bool) -> tuple[str, dict]:
     if status.strip():
         raise RuntimeError("Working tree is not clean; commit or discard local changes before deployment.")
 
-    print("\\n=== ZERO-GPU PACKAGING TESTS ===", flush=True)
+    print("\n=== ZERO-GPU PACKAGING TESTS ===", flush=True)
     run([
         sys.executable, "-m", "unittest", "discover",
         "-s", "tests", "-p", "test_hf_zerogpu_packaging.py", "-v",
     ])
 
-    print("\\n=== FULL LOCAL TEST SUITE ===", flush=True)
+    print("\n=== FULL LOCAL TEST SUITE ===", flush=True)
     run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"])
 
     status_after = run(["git", "status", "--porcelain", "--untracked-files=all"], capture=True).stdout
@@ -105,7 +105,7 @@ def local_release_gate(*, manual_approval: bool) -> tuple[str, dict]:
         raise RuntimeError("Tests changed tracked/untracked repository files; refusing deployment.")
 
     expected = f"DEPLOY VORAX {local_sha[:12]}"
-    print("\\nGitHub Actions status is NOT being claimed as successful.", flush=True)
+    print("\nGitHub Actions status is NOT being claimed as successful.", flush=True)
     print("The deployment decision is based on the fresh local tests above.", flush=True)
     typed = input(f"To approve this exact clean main commit, type '{expected}': ").strip()
     if typed != expected:
