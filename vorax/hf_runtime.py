@@ -358,7 +358,7 @@ def _verify_and_submit(candidate: dict, child_id: str, teacher_id: str, x_value:
             verification="runtime_tests_passed_vault_failed",
             reason=str(exc)[:240],
         )
-        raise HTTPException(503, "Method passed Runtime tests but Vault pending write failed; no Home commit was made") from exc
+        raise HTTPException(503, "Method passed Runtime tests but the Vault pending write failed; no Home proposal PR was opened") from exc
 
     home_submission = {"status": "not_submitted"}
     try:
