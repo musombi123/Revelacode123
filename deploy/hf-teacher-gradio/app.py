@@ -1,73 +1,55 @@
-"""Gradio-SDK adapter for the unchanged VORAX Teacher FastAPI routes."""
+"""Gradio Server-mode host for the unchanged VORAX Teacher FastAPI routes."""
 from __future__ import annotations
 
-import asyncio
-import inspect
 import os
 
-# Disable the Gradio Node SSR proxy so non-Gradio API paths reach Python/FastAPI.
+# Hugging Face Spaces' Node SSR proxy can intercept custom FastAPI routes.
+# Disable it through the documented environment variable before Gradio imports.
 os.environ.setdefault("GRADIO_SSR_MODE", "false")
 
-import gradio as gr
-import spaces
+from fastapi import APIRouter
+from gradio import Server
 from hf_teacher import app as service_app
 
-# ZeroGPU's Gradio runtime requires a GPU-decorated function to be present.
-# This marker is intentionally never called; VORAX Teacher is CPU/API-only.
-@spaces.GPU
-def _zerogpu_platform_marker() -> None:
-    """Platform compatibility marker only. Never invoke this function."""
-    return None
+# Server mode is a FastAPI server with Gradio hosting support. VORAX Teacher
+# is an HTTP/metadata/remote-provider service and does not need GPU execution.
+app = Server(title="VORAX Teacher Service")
+
+api_router = APIRouter()
+_RESERVED_SERVER_PATHS = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+for route in service_app.router.routes:
+    if getattr(route, "path", None) not in _RESERVED_SERVER_PATHS:
+        api_router.routes.append(route)
+
+# Include the original Teacher endpoint objects so their paths, validation,
+# authentication, response schema and OpenAPI contracts remain unchanged.
+app.include_router(api_router)
+
+# Carry over source-app lifecycle hooks before Gradio starts serving requests.
+for callback in service_app.router.on_startup:
+    app.add_event_handler("startup", callback)
+for callback in service_app.router.on_shutdown:
+    app.add_event_handler("shutdown", callback)
 
 
-with gr.Blocks(title="VORAX Teacher Service") as demo:
-    gr.Markdown(
-        """
-        # VORAX Teacher Service
-
-        **Role:** remote capability proposal service.
-
-        This service discovers public model/provider metadata and, when
-        authenticated, asks a remote inference provider for a candidate
-        V-Lang procedure. It does not certify or store VORAX knowledge.
-
-        - Health: [/health](/health)
-        - API documentation: [/docs](/docs)
-        - Metadata discovery: [/teacher/discover?query=language&limit=3](/teacher/discover?query=language&limit=3)
-
-        **Trust boundary:** the separate Runtime validates proposals; accepted
-        knowledge is brought Home through GitHub review and merge.
-        """
-    )
+@app.get("/", tags=["service"])
+def service_root():
+    return {
+        "service": "VORAX Teacher Service",
+        "role": "remote capability proposal",
+        "health": "/health",
+        "discovery": "/teacher/discover",
+        "ask": "/teacher/ask",
+        "docs": "/docs",
+        "weights_downloaded": False,
+        "local_model_loaded": False,
+    }
 
 
-def _run_service_startup() -> None:
-    """Run the source FastAPI app's registered startup hooks exactly once."""
-    for callback in getattr(service_app.router, "on_startup", []):
-        result = callback()
-        if inspect.isawaitable(result):
-            asyncio.run(result)
-
-
-def _mount_service_routes() -> None:
-    """Expose the original FastAPI endpoints without changing their contracts."""
-    if demo.app is None:
-        raise RuntimeError("Gradio app was not initialized before API route mounting")
-    current = list(demo.app.router.routes)
-    source_routes = [
-        route
-        for route in service_app.router.routes
-        if getattr(route, "path", None) != "/"
-    ]
-    # Put the service's exact routes first so /health and /teacher/* resolve
-    # before Gradio's catch-all/static routes.
-    demo.app.router.routes[:] = source_routes + current
-
+# Hugging Face Gradio Spaces recognizes the demo variable.
+demo = app
 
 if __name__ == "__main__":
-    # Gradio launch() is required by the ZeroGPU SDK runtime. Do not start a
-    # second Uvicorn process or call mount_gradio_app() on a separate server.
-    demo.launch(prevent_thread_lock=True, ssr_mode=False)
-    _mount_service_routes()
-    _run_service_startup()
-    demo.block_thread()
+    # No GPU function is decorated or invoked: Teacher uses remote inference
+    # providers and CPU-side metadata routing only.
+    demo.launch(ssr_mode=False)
