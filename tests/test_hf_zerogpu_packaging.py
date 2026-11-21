@@ -57,13 +57,17 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
             self.assertIn("service_app.router.on_shutdown", source)
             self.assertIn('app.add_event_handler("shutdown", callback)', source)
 
+    def test_runtime_declares_vault_client_dependency(self):
+        requirements = self._read("deploy/hf-runtime-gradio/requirements.txt").lower()
+        self.assertIn("huggingface_hub>=0.27,<2", requirements)
+
     def test_requirements_do_not_override_platform_managed_packages_or_load_models(self):
         for relative in (
             "deploy/hf-teacher-gradio/requirements.txt",
             "deploy/hf-runtime-gradio/requirements.txt",
         ):
             requirements = self._read(relative).lower()
-            for forbidden in ("gradio", "spaces", "huggingface_hub", "diffusers", "transformers"):
+            for forbidden in ("gradio", "spaces", "diffusers", "transformers"):
                 self.assertNotIn(forbidden, requirements)
 
     def test_runtime_system_packages_include_ffmpeg_for_verified_mp4_inspection(self):
