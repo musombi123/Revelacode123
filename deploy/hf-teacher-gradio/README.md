@@ -23,13 +23,15 @@ This is the Teacher API hosted through Gradio Server mode on an eligible free Ze
 
 ## VORAX learning boundary
 
-The Teacher is not VORAX and does not certify knowledge. It proposes a candidate procedure from remote model reasoning. The separate VORAX Runtime validates the exact candidate using the shared V-Lang interpreter and declared tests. A passing proposal remains pending in the existing private Dataset Vault until GitHub Home accepts the matching method through its normal review/merge path.
+The Teacher is not VORAX and does not certify knowledge. It proposes a candidate procedure from remote model reasoning. The separate VORAX Runtime validates the exact candidate using the shared V-Lang interpreter and declared tests. A passing proposal remains pending in the existing private Dataset Vault until Runtime commits the matching verified method and metadata-only index to GitHub Home.
 
 ## Hosting, compute and weight policy
 
 - This Space uses Gradio SDK with the free `zero-a10g` hosting flavor for eligible free personal accounts.
 - Gradio Server mode preserves the original FastAPI endpoints and lifecycle.
-- No GPU function is used. Metadata and HTTP routing run on the web process; no GPU time is requested for Teacher operations.
+- ZeroGPU requires a registered `@spaces.GPU` handler. This Space registers a private child-authenticated compatibility probe; ordinary Teacher routes never invoke it and perform no GPU work.
+- The compatibility probe performs no CUDA, model loading, training or inference. It requests a one-second ZeroGPU allocation only if explicitly called with the VORAX child credential.
+- Teacher metadata and HTTP routing run on the web process; no GPU time is requested for normal Teacher operations.
 - No model weights are downloaded, cached, trained or hosted.
 - Remote inference is free-provider-only by default; billable providers remain disabled.
 - Kaggle T4 is not used.
