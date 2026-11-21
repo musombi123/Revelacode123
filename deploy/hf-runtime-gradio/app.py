@@ -1,25 +1,54 @@
 """Gradio Server-mode host for the unchanged VORAX Runtime FastAPI routes."""
 from __future__ import annotations
 
+import hmac
 import os
 
 # Hugging Face Spaces' Node SSR proxy can intercept custom FastAPI routes.
-# Disable it through the documented environment variable before Gradio imports.
+# Disable it before importing Gradio.
 os.environ.setdefault("GRADIO_SSR_MODE", "false")
 
-from fastapi import APIRouter
+# Import ZeroGPU support before Gradio or any libraries that may initialize
+# CUDA. The registered probe below is not used by ordinary Runtime requests.
+import spaces
+from fastapi import APIRouter, HTTPException
 from gradio import Server
 from vorax.hf_runtime import app as service_app
 
 # Gradio Server exposes FastAPI-compatible lifecycle hooks through its
-# constructor. It does not expose FastAPI.add_event_handler() on the Server
-# instance. Preserve Runtime's startup reconciliation by transferring the
-# source router hooks at construction time.
+# constructor. Preserve Runtime's startup Vault/Home reconciliation.
 app = Server(
     title="VORAX Runtime Service",
     on_startup=list(service_app.router.on_startup),
     on_shutdown=list(service_app.router.on_shutdown),
 )
+
+
+@spaces.GPU(duration=1)
+def _zerogpu_startup_compat() -> dict:
+    """ZeroGPU registration marker; returns a static value without model inference."""
+    return {"status": "zerogpu_registered"}
+
+
+@app.api(
+    name="zerogpu_startup_compat",
+    description="Private authenticated ZeroGPU runtime compatibility probe.",
+    api_visibility="private",
+    concurrency_limit=1,
+)
+def run_zerogpu_startup_compat(child_id: str, api_key: str) -> dict:
+    """Call the inert ZeroGPU probe only for an authenticated VORAX child."""
+    expected_id = os.getenv("VORAX_CHILD_ID", "kaggle-child").strip()
+    expected_key = os.getenv("VORAX_KAGGLE_CHILD_API_KEY", "").strip()
+    if (
+        not expected_key
+        or child_id != expected_id
+        or not api_key
+        or not hmac.compare_digest(api_key, expected_key)
+    ):
+        raise HTTPException(status_code=403, detail="Authenticated VORAX child required")
+    return _zerogpu_startup_compat()
+
 
 api_router = APIRouter()
 _RESERVED_SERVER_PATHS = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
@@ -27,7 +56,7 @@ for route in service_app.router.routes:
     if getattr(route, "path", None) not in _RESERVED_SERVER_PATHS:
         api_router.routes.append(route)
 
-# Preserve the original Runtime route objects and all their authentication,
+# Preserve original Runtime endpoint objects and all authentication,
 # validation, request and response contracts.
 app.include_router(api_router)
 
@@ -50,6 +79,6 @@ def service_root():
 demo = app
 
 if __name__ == "__main__":
-    # No GPU function is decorated or invoked: V-Lang execution, Home-index
-    # reads and Vault reconciliation are CPU/network/storage operations.
+    # V-Lang, Home-index and Vault operations use CPU/network/storage.
+    # The private ZeroGPU compatibility probe is not called during launch.
     demo.launch(ssr_mode=False)

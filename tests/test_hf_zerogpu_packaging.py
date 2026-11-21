@@ -36,14 +36,44 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
             self.assertIn("demo.launch(ssr_mode=False)", source)
             self.assertIn('os.environ.setdefault("GRADIO_SSR_MODE", "false")', source)
 
-    def test_adapters_do_not_request_or_fake_gpu_work(self):
+    def test_adapters_register_private_authenticated_zerogpu_startup_probe(self):
         for relative in (
             "deploy/hf-teacher-gradio/app.py",
             "deploy/hf-runtime-gradio/app.py",
         ):
             source = self._read(relative)
-            self.assertNotIn("import spaces", source)
-            self.assertNotIn("@spaces.GPU", source)
+            ast.parse(source, filename=relative)
+            self.assertIn("import spaces", source)
+            self.assertIn("@spaces.GPU(duration=1)", source)
+            self.assertIn('@app.api(', source)
+            self.assertIn('name="zerogpu_startup_compat"', source)
+            self.assertIn('api_visibility="private"', source)
+            self.assertIn("return _zerogpu_startup_compat()", source)
+            self.assertIn("hmac.compare_digest(api_key, expected_key)", source)
+
+            probe = source.split("@spaces.GPU(duration=1)", 1)[1].split("@app.api(", 1)[0]
+            for forbidden in ("torch", "cuda", "from_pretrained", "diffusers", "transformers"):
+                self.assertNotIn(forbidden, probe.lower())
+
+    def test_zerogpu_probe_is_only_called_by_its_authenticated_private_api_wrapper(self):
+        for relative in (
+            "deploy/hf-teacher-gradio/app.py",
+            "deploy/hf-runtime-gradio/app.py",
+        ):
+            source = self._read(relative)
+            self.assertEqual(source.count("_zerogpu_startup_compat()"), 2)
+            self.assertIn("api_visibility=\"private\"", source)
+            self.assertIn("expected_key = os.getenv(\"VORAX_KAGGLE_CHILD_API_KEY\", \"\").strip()", source)
+            self.assertIn("status_code=403", source)
+
+    def test_adapters_do_not_load_models_or_execute_gpu_work_in_business_routes(self):
+        for relative in (
+            "deploy/hf-teacher-gradio/app.py",
+            "deploy/hf-runtime-gradio/app.py",
+        ):
+            source = self._read(relative).lower()
+            for forbidden in ("import torch", "import diffusers", "transformers.pipeline", ".from_pretrained(", ".cuda("):
+                self.assertNotIn(forbidden, source)
             self.assertNotIn("uvicorn.run(", source)
 
     def test_adapters_transfer_source_lifecycle_hooks_through_server_constructor(self):
@@ -106,13 +136,12 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn("DEPLOYMENT_STAGE", source)
         self.assertIn("def set_deployment_stage", source)
         self.assertIn("def http_error_summary", source)
-        self.assertIn("response.status_code", source)
+        self.assertIn('getattr(response, "status_code", None)', source)
         self.assertIn("parsed.path", source)
         self.assertIn("[REDACTED_HF_TOKEN]", source)
         self.assertIn("Teacher metadata discovery smoke test", source)
         self.assertIn("authenticated Runtime Input X smoke test", source)
         self.assertIn("Health check did not pass", source)
-
 
 
 if __name__ == "__main__":
