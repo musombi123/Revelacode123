@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+import urllib.parse
 from types import SimpleNamespace
 from unittest.mock import patch
 
