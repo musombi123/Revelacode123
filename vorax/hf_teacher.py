@@ -74,6 +74,10 @@ def _http_json(url: str, *, token: str = "", body: dict | None = None, timeout: 
             return json.loads(raw.decode("utf-8")), dict(response.headers)
     except urllib.error.HTTPError as exc:
         if body is None:
+            if exc.code == 404:
+                raise HTTPException(404, "Hugging Face metadata item was not found") from exc
+            if exc.code == 429:
+                raise HTTPException(503, "Hugging Face metadata API rate limit reached") from exc
             raise HTTPException(502, f"Hugging Face metadata API returned HTTP {exc.code}") from exc
         # Do not echo upstream response bodies; they can contain sensitive provider diagnostics.
         if exc.code in {401, 403}:
@@ -159,7 +163,6 @@ def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None)
             ("expand[]", "likes"),
             ("expand[]", "pipeline_tag"),
             ("expand[]", "library_name"),
-            ("expand[]", "cardData"),
             ("expand[]", "inferenceProviderMapping"),
         ])
     url = f"https://huggingface.co/api/{kind}?" + urllib.parse.urlencode(params)
@@ -179,29 +182,55 @@ def _discover_kind(kind: str, query: str, limit: int, cursor: str | None = None)
     return rows, _next_cursor(headers)
 
 
-def _discover_router_models(query: str, limit: int) -> list[dict]:
-    """Read the HF OpenAI-compatible model/provider catalogue; no inference is performed."""
+def _discover_router_models(
+    query: str,
+    limit: int,
+    *,
+    model_ids: list[str] | None = None,
+) -> list[dict]:
+    """Look up bounded, explicit chat model IDs; never download the global router catalogue."""
+    if model_ids is None:
+        raise HTTPException(422, "Router metadata lookup requires explicit model IDs")
     token = os.getenv("HF_TOKEN", "").strip()
-    if not token:
+    if not token and model_ids:
         raise HTTPException(503, "HF_TOKEN is required for the Inference Providers model catalogue")
-    payload, _ = _http_json(HF_ROUTER_MODELS_API, token=token, timeout=25)
-    items = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(items, list):
-        raise HTTPException(502, "Hugging Face router model catalogue returned an unexpected response")
-    result = []
-    needle = query.strip().casefold()
-    for item in items:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            continue
-        model_id = item["id"]
-        if needle and needle not in model_id.casefold():
-            continue
+
+    selected_ids = []
+    for model_id in model_ids:
+        if (
+            isinstance(model_id, str)
+            and MODEL_ID_RE.fullmatch(model_id)
+            and ":" not in model_id
+            and model_id not in selected_ids
+        ):
+            selected_ids.append(model_id)
+        if len(selected_ids) >= min(max(int(limit), 0), 20):
+            break
+    if not selected_ids:
+        return []
+
+    def lookup(model_id: str) -> dict | None:
+        model_path = urllib.parse.quote(model_id, safe="/")
+        payload, _ = _http_json(
+            f"{HF_ROUTER_MODELS_API}/{model_path}",
+            token=token,
+            timeout=25,
+        )
+        if not isinstance(payload, dict) or payload.get("id") != model_id:
+            raise HTTPException(502, "Hugging Face router returned invalid per-model metadata")
+        entries = payload.get("providers")
+        if not isinstance(entries, list):
+            raise HTTPException(502, "Hugging Face router model metadata omitted providers")
+
         provider_rows = []
-        for entry in item.get("providers", []) if isinstance(item.get("providers"), list) else []:
+        for entry in entries:
             if not isinstance(entry, dict):
                 continue
+            provider = str(entry.get("provider") or "").strip()
+            if not provider:
+                continue
             provider_rows.append({
-                "provider": str(entry.get("provider") or ""),
+                "provider": provider,
                 "status": str(entry.get("status") or ""),
                 "provider_model_id": model_id,
                 "task": "conversational",
@@ -213,19 +242,34 @@ def _discover_router_models(query: str, limit: int) -> list[dict]:
                 "supports_structured_output": entry.get("supports_structured_output"),
                 "is_free": entry.get("is_free"),
             })
-        result.append({
+        return {
             "id": model_id,
             "source_type": "router_chat_model",
-            "owned_by": str(item.get("owned_by") or ""),
+            "owned_by": str(payload.get("owned_by") or ""),
             "tags": ["conversational", "remote-inference"],
             "description": "Listed by the Hugging Face Inference Providers router",
             "pipeline_tag": "conversational",
             "library_name": None,
             "sdk": None,
             "providers": provider_rows,
-        })
-        if len(result) >= limit:
-            break
+        }
+
+    # A bounded worker pool keeps metadata discovery responsive and avoids
+    # requesting the multi-megabyte global /v1/models catalogue.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(selected_ids))) as pool:
+        futures = [pool.submit(lookup, model_id) for model_id in selected_ids]
+        result = []
+        for future in futures:
+            try:
+                item = future.result()
+            except HTTPException as exc:
+                # A model can be present in Hub metadata but absent from the
+                # chat-completions router (for example, image-only models).
+                if exc.status_code == 404:
+                    continue
+                raise
+            if item is not None:
+                result.append(item)
     return result
 
 
@@ -261,7 +305,26 @@ def discover(
 
     models = list(found.get("models", []))
     resources = [item for kind in kinds for item in found.get(kind, [])]
-    router_models = _discover_router_models(query, limit) if "models" in kinds and cursor is None else []
+    # Hub model metadata supplies the bounded candidate IDs. Enrich only
+    # models advertising a conversational provider mapping, including on
+    # later cursor pages, instead of fetching the unbounded global router list.
+    chat_model_ids = [
+        item["id"]
+        for item in models
+        if isinstance(item, dict)
+        and isinstance(item.get("providers"), list)
+        and any(
+            isinstance(provider, dict)
+            and str(provider.get("task") or "").casefold()
+            in {"conversational", "text-generation"}
+            and str(provider.get("status") or "").casefold() == "live"
+            for provider in item["providers"]
+        )
+    ]
+    router_models = (
+        _discover_router_models(query, min(limit, 20), model_ids=chat_model_ids)
+        if "models" in kinds and chat_model_ids else []
+    )
     by_id = {item["id"]: item for item in models if isinstance(item, dict) and item.get("id")}
     for model in router_models:
         existing = by_id.get(model["id"])
@@ -274,7 +337,7 @@ def discover(
     return {
         "status": "metadata_only",
         "query": query,
-        "sources_searched": [*kinds, *([ "inference_provider_router" ] if "models" in kinds and cursor is None else [])],
+        "sources_searched": [*kinds, *([ "inference_provider_router" ] if router_models else [])],
         "models": models,
         "router_models": router_models,
         "resources": resources,
@@ -294,7 +357,7 @@ def _billable_inference_allowed() -> bool:
 def _resolve_teacher_model(model_ref: str) -> str:
     """Resolve a live provider and require explicit free pricing unless billable use is enabled."""
     base_model, separator, requested_provider = model_ref.partition(":")
-    catalogue = _discover_router_models(base_model, limit=100)
+    catalogue = _discover_router_models(base_model, limit=1, model_ids=[base_model])
     model = next((item for item in catalogue if item.get("id") == base_model), None)
     if model is None:
         raise HTTPException(404, "The requested model is not listed by the Inference Providers router")
