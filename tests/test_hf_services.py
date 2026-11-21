@@ -44,7 +44,7 @@ class TeacherServiceTests(unittest.TestCase):
         }]
         with patch.object(hf_teacher, "_http_json", return_value=(metadata, {})) as call, \
              patch.object(hf_teacher, "_discover_router_models", return_value=router_models):
-            result = hf_teacher.discover(query="example", limit=3, source="models")
+            result = hf_teacher.discover(query="example", limit=3, source="models", cursor=None)
         self.assertEqual(result["status"], "metadata_only")
         self.assertEqual(result["models"], [{
             "id": "acme/example", "source_type": "model", "tags": ["text-generation"],
@@ -230,6 +230,8 @@ class RuntimeServiceTests(unittest.TestCase):
             "VORAX_TEACHER_ATTESTATION_KEY": "test-teacher-hmac-secret-long-enough",
         }, clear=True), \
              patch.object(hf_runtime, "CHILD_KEY", "child-test-key"), \
+             patch.object(hf_runtime, "HOME_READ_TOKEN", "read-token"), \
+             patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
              patch.object(hf_runtime, "_refresh_home_index", return_value=({
                  "version": "vorax-home-method-index/v1",
                  "methods_total": 0,
@@ -446,7 +448,8 @@ class RuntimeServiceTests(unittest.TestCase):
             ],
             "provenance": {"kind": "teacher", "teacher": "test-teacher"},
         }
-        with patch.object(hf_runtime, "_reconcile_home_methods", return_value={
+        with patch.object(hf_runtime, "HOME_WRITE_TOKEN", "write-token"), \
+             patch.object(hf_runtime, "_reconcile_home_methods", return_value={
                  "status": "no_home_merged_pending_methods", "methods_loaded_into_runtime": 0,
              }), \
              patch.object(hf_runtime, "pending_duplicate_reason", return_value=None), \

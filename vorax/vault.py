@@ -523,8 +523,6 @@ def promote_pending_home_methods(home_index: dict) -> dict:
         entry["status"] = "merged_home_and_promoted"
         entry["home_certification"] = "confirmed_by_home_index"
         entry["promoted_at"] = promoted_at
-        promoted_methods.append(candidate)
-
         report_path = entry.get("verification_report")
         if report_path:
             report = _read_json(api, repo, report_path, {})
