@@ -11,12 +11,14 @@ import argparse
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -35,6 +37,69 @@ CHILD_ID = "kaggle-child"
 TEACHER_URL = "https://musombi-vorax-teacher-service.hf.space"
 RUNTIME_URL = "https://musombi-vorax-runtime-service.hf.space"
 ZERO_GPU = "zero-a10g"
+
+DEPLOYMENT_STAGE = "initialization"
+
+
+def set_deployment_stage(value: str) -> None:
+    """Expose the precise operation being performed without exposing credentials."""
+    global DEPLOYMENT_STAGE
+    DEPLOYMENT_STAGE = value
+    print(f"\n[DEPLOY] {value}", flush=True)
+
+
+def _redact_diagnostic(value: object) -> str:
+    """Remove token-like values before any remote error is printed."""
+    text = str(value or "")
+    text = re.sub(r"(?i)hf_[A-Za-z0-9]{12,}", "[REDACTED_HF_TOKEN]", text)
+    text = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+", r"\1[REDACTED]", text)
+    text = re.sub(
+        r"(?i)((?:token|secret|api[_-]?key|password|authorization)[\"']?\s*[:=]\s*[\"']?)[^\"'\s,}]+",
+        r"\1[REDACTED]",
+        text,
+    )
+    return text[:1600]
+
+
+def http_error_summary(exc: Exception) -> str:
+    """Return status, safe endpoint and a bounded redacted error body."""
+    response = getattr(exc, "response", None)
+    status = (
+        getattr(response, "status_code", None)
+        or getattr(exc, "status_code", None)
+        or getattr(exc, "code", None)
+    )
+    reason = getattr(exc, "reason", None) or getattr(response, "reason_phrase", None) or ""
+    raw_url = (
+        getattr(exc, "url", None)
+        or getattr(response, "url", None)
+        or getattr(getattr(response, "request", None), "url", None)
+        or ""
+    )
+    try:
+        parsed = urllib.parse.urlsplit(str(raw_url))
+        safe_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    except Exception:
+        safe_url = ""
+    body = ""
+    try:
+        if response is not None:
+            body = str(getattr(response, "text", "") or "")
+        elif isinstance(exc, urllib.error.HTTPError):
+            body = exc.read(4096).decode("utf-8", "replace")
+    except Exception:
+        body = ""
+    parts = [f"HTTP {status or 'unknown'}"]
+    if reason:
+        parts.append(str(reason))
+    if safe_url:
+        parts.append(f"endpoint={safe_url}")
+    if body:
+        parts.append(f"response={_redact_diagnostic(body)}")
+    elif not safe_url:
+        parts.append(_redact_diagnostic(str(exc)))
+    return "; ".join(parts)
+
 
 REQUIRED_SECRETS = (
     "HF_SPACE_TOKEN",
@@ -287,8 +352,10 @@ def wait_health(url: str, timeout_seconds: int = 600) -> dict:
             if status == 200 and payload.get("status") == "ok":
                 return payload
             last_error = f"HTTP {status}: health payload not ready"
+        except urllib.error.HTTPError as exc:
+            last_error = http_error_summary(exc)
         except Exception as exc:
-            last_error = type(exc).__name__
+            last_error = f"{type(exc).__name__}: {_redact_diagnostic(str(exc))}"
         time.sleep(8)
     raise RuntimeError(f"Health check did not pass for {url}: {last_error}")
 
@@ -313,9 +380,12 @@ def main() -> int:
     if not args.manual_local_approval:
         parser.error("Pass --manual-local-approval to explicitly approve the local-verification deployment path.")
 
+    set_deployment_stage("local release gate and typed approval")
     commit_sha, release_proof = local_release_gate(manual_approval=args.manual_local_approval)
+    set_deployment_stage("collecting required deployment credentials")
     values = prompt_secrets()
 
+    set_deployment_stage("authenticating the Hugging Face Space write token")
     api = HfApi(token=values["HF_SPACE_TOKEN"])
     identity = api.whoami()
     username = str(identity.get("name") or identity.get("fullname") or "")
@@ -324,8 +394,10 @@ def main() -> int:
             f"HF_SPACE_TOKEN authenticated as {username!r}, not {OWNER!r}; refusing deployment."
         )
 
+    set_deployment_stage("read-only audit of the existing private Dataset Vault")
     vault_proof = inspect_existing_vault(values["HF_VAULT_TOKEN"])
 
+    set_deployment_stage("building and validating weight-free Teacher and Runtime packages")
     with tempfile.TemporaryDirectory(prefix="vorax-hf-zerogpu-") as temporary:
         base = Path(temporary)
         teacher_dir = base / "teacher"
@@ -336,7 +408,9 @@ def main() -> int:
         build_runtime_package(runtime_dir)
 
         # Create/verify both Spaces before uploading either service package.
+        set_deployment_stage(f"creating/verifying free ZeroGPU Teacher Space: {TEACHER_REPO}")
         teacher_space = ensure_zero_gpu_gradio_space(api, TEACHER_REPO)
+        set_deployment_stage(f"creating/verifying free ZeroGPU Runtime Space: {RUNTIME_REPO}")
         runtime_space = ensure_zero_gpu_gradio_space(api, RUNTIME_REPO)
 
         teacher_secrets = {
@@ -366,9 +440,12 @@ def main() -> int:
         if teacher_model:
             runtime_secrets["VORAX_TEACHER_MODEL"] = teacher_model
 
+        set_deployment_stage("configuring Teacher Space secrets")
         set_space_secrets(api, TEACHER_REPO, teacher_secrets)
+        set_deployment_stage("configuring Runtime Space secrets")
         set_space_secrets(api, RUNTIME_REPO, runtime_secrets)
 
+        set_deployment_stage("uploading Teacher Space package")
         api.upload_folder(
             repo_id=TEACHER_REPO,
             repo_type="space",
@@ -376,6 +453,7 @@ def main() -> int:
             path_in_repo="",
             commit_message=f"Deploy VORAX Teacher Gradio/ZeroGPU from verified release {commit_sha[:12]}",
         )
+        set_deployment_stage("uploading Runtime Space package")
         api.upload_folder(
             repo_id=RUNTIME_REPO,
             repo_type="space",
@@ -384,6 +462,7 @@ def main() -> int:
             commit_message=f"Deploy VORAX Runtime Gradio/ZeroGPU from verified release {commit_sha[:12]}",
         )
 
+    set_deployment_stage("waiting for Teacher /health")
     teacher_health = wait_health(TEACHER_URL + "/health")
     if teacher_health.get("metadata_token_configured") is not True:
         raise RuntimeError("Teacher metadata read credentials are missing.")
@@ -392,6 +471,7 @@ def main() -> int:
     if teacher_health.get("free_provider_only") is not True:
         raise RuntimeError("Teacher billable inference is not safely disabled.")
 
+    set_deployment_stage("Teacher metadata discovery smoke test: GET /teacher/discover")
     status, discovery = request_json(
         TEACHER_URL + "/teacher/discover?query=language&limit=3&source=models",
         timeout=60,
@@ -401,6 +481,7 @@ def main() -> int:
     if discovery.get("weights_downloaded") is not False:
         raise RuntimeError("Teacher discovery did not prove the weight-free policy.")
 
+    set_deployment_stage("waiting for Runtime /health and secret readiness")
     runtime_health = wait_health(RUNTIME_URL + "/health")
     required = runtime_health.get("required_secrets", {})
     if runtime_health.get("ready") is not True or not all(required.values()):
@@ -408,6 +489,7 @@ def main() -> int:
     if runtime_health.get("home_method_bodies_loaded") is not False:
         raise RuntimeError("Runtime Home metadata boundary failed.")
 
+    set_deployment_stage("authenticated Runtime Input X smoke test: POST /vorax/x")
     status, runtime_smoke = request_json(
         RUNTIME_URL + "/vorax/x",
         body={
@@ -445,11 +527,16 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (HfHubHTTPError, urllib.error.HTTPError) as exc:
         print(
-            f"Hugging Face deployment failed: {type(exc).__name__}. "
-            "No secret values were printed; no CPU Basic or paid-hardware fallback was attempted.",
+            f"Hugging Face deployment failed during [{DEPLOYMENT_STAGE}]: "
+            f"{http_error_summary(exc)}. "
+            "Credentials have been redacted; no CPU Basic or paid-hardware fallback was attempted.",
             file=sys.stderr,
         )
         raise SystemExit(2)
     except Exception as exc:
-        print(f"VORAX ZeroGPU deployment stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"VORAX ZeroGPU deployment stopped during [{DEPLOYMENT_STAGE}]: "
+            f"{type(exc).__name__}: {_redact_diagnostic(str(exc))}",
+            file=sys.stderr,
+        )
         raise SystemExit(2)

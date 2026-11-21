@@ -101,6 +101,19 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertTrue((ROOT / "deploy/hf-teacher/Dockerfile").is_file())
         self.assertTrue((ROOT / "deploy/hf-runtime/Dockerfile").is_file())
 
+    def test_deploy_script_reports_failure_stage_and_redacted_http_details(self):
+        source = self._read("scripts/deploy_hf_zerogpu_children.py")
+        self.assertIn("DEPLOYMENT_STAGE", source)
+        self.assertIn("def set_deployment_stage", source)
+        self.assertIn("def http_error_summary", source)
+        self.assertIn("response.status_code", source)
+        self.assertIn("parsed.path", source)
+        self.assertIn("[REDACTED_HF_TOKEN]", source)
+        self.assertIn("Teacher metadata discovery smoke test", source)
+        self.assertIn("authenticated Runtime Input X smoke test", source)
+        self.assertIn("Health check did not pass", source)
+
+
 
 if __name__ == "__main__":
     unittest.main()
