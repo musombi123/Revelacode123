@@ -159,9 +159,18 @@ def _refresh_home_index(force: bool = False) -> tuple[dict | None, dict]:
         try:
             cache_receipt = write_home_metadata_cache(fresh_index)
             _HOME_INDEX_STATUS["vault_cache"] = cache_receipt.get("status")
-        except VaultError as cache_exc:
+        except Exception as cache_exc:
+            # The live GitHub Home index is authoritative. A failed optional
+            # Vault cache write must never invalidate a successful Home read.
             _HOME_INDEX_STATUS["vault_cache"] = "unavailable"
             _HOME_INDEX_STATUS["cache_error"] = type(cache_exc).__name__
+            _log(
+                "home_metadata_cache_write_failed",
+                x="Home metadata cache",
+                verification="live_home_index_retained",
+                reason=type(cache_exc).__name__,
+                methods_total=fresh_index["methods_total"],
+            )
     except Exception as exc:
         cached_index = prior_index
         cache_kind = "runtime_memory_snapshot"
