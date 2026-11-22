@@ -1,4 +1,4 @@
-"""Gradio Server-mode host for the unchanged VORAX Teacher FastAPI routes."""
+""""Gradio Server-mode host for the unchanged VORAX Teacher FastAPI routes."""
 from __future__ import annotations
 
 import hmac
@@ -13,7 +13,7 @@ os.environ.setdefault("GRADIO_SSR_MODE", "false")
 import spaces
 from fastapi import APIRouter, HTTPException
 from gradio import Server
-from hf_teacher import app as service_app
+from vorax.hf_teacher import app as service_app
 
 # Gradio Server exposes FastAPI-compatible lifecycle hooks through its
 # constructor. Preserve the source Teacher application's startup/shutdown.

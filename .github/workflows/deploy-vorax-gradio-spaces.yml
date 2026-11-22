@@ -87,7 +87,13 @@ jobs:
 
               for name in ("README.md", "requirements.txt", "app.py"):
                   shutil.copy2(teacher_src / name, teacher / name)
-              shutil.copy2(root / "vorax" / "hf_teacher.py", teacher / "hf_teacher.py")
+
+              # Keep Teacher source inside the canonical Python package so
+              # its package-relative imports (for example, .network) resolve.
+              teacher_package = teacher / "vorax"
+              teacher_package.mkdir()
+              for name in ("__init__.py", "hf_teacher.py", "network.py"):
+                  shutil.copy2(root / "vorax" / name, teacher_package / name)
 
               for name in ("README.md", "requirements.txt", "packages.txt", "app.py"):
                   shutil.copy2(runtime_src / name, runtime / name)
