@@ -72,9 +72,9 @@ def run_zerogpu_startup_compat(child_id: str, api_key: str) -> dict:
     return _zerogpu_startup_compat()
 
 
-# Mount the original FastAPI route objects directly on Gradio Server's own
-# router. The helper verifies required HTTP methods in the generated OpenAPI
-# document before the Space can start, so missing weekly endpoints fail early.
+# Include the original FastAPI routes through FastAPI's standard router API.
+# The helper invalidates any previously cached OpenAPI schema, rebuilds it,
+# and verifies required HTTP methods before the Space can start.
 _mounted_runtime_routes = mount_fastapi_routes(
     source_app=service_app,
     target_app=app,
