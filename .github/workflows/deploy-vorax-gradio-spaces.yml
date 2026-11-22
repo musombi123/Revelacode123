@@ -35,17 +35,40 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           python - <<'PY'
-          import json, os, subprocess, sys
-          result = subprocess.run(
-              ["gh", "api", f"repos/{os.environ['GH_REPO']}/commits/{os.environ['COMMIT_SHA']}/check-runs"],
-              check=True, capture_output=True, text=True,
-          )
-          checks = json.loads(result.stdout).get("check_runs", [])
-          verify = [c for c in checks if c.get("name") == "verify"]
-          if not verify or not any(c.get("status") == "completed" and c.get("conclusion") == "success" for c in verify):
-              print("Required verify check is not green on this exact commit.", file=sys.stderr)
+          import json, os, subprocess, sys, time
+
+          repo = os.environ["GH_REPO"]
+          sha = os.environ["COMMIT_SHA"]
+          deadline = time.monotonic() + 600
+          last_state = "not found"
+          while time.monotonic() < deadline:
+              result = subprocess.run(
+                  ["gh", "api", f"repos/{repo}/commits/{sha}/check-runs"],
+                  check=True, capture_output=True, text=True,
+              )
+              checks = json.loads(result.stdout).get("check_runs", [])
+              verify = [item for item in checks if item.get("name") == "verify"]
+              if verify:
+                  # A check run is associated with the exact SHA; wait while it is queued/running.
+                  successful = [item for item in verify if item.get("status") == "completed" and item.get("conclusion") == "success"]
+                  failed = [item for item in verify if item.get("status") == "completed" and item.get("conclusion") not in (None, "success", "neutral", "skipped")]
+                  in_progress = [item for item in verify if item.get("status") != "completed"]
+                  if successful:
+                      print(f"Exact-SHA verify check: success ({sha})")
+                      break
+                  if failed and not in_progress:
+                      details = [(item.get("conclusion"), item.get("html_url")) for item in failed]
+                      print(f"Exact-SHA verify check failed: {details}", file=sys.stderr)
+                      sys.exit(1)
+                  last_state = "pending/in progress"
+              else:
+                  last_state = "not yet created"
+              print(f"Waiting for exact-SHA verify check: {last_state}")
+              time.sleep(10)
+          else:
+              print(f"Timed out waiting for successful verify check on {sha}; last state: {last_state}", file=sys.stderr)
               sys.exit(1)
-          print("Exact-SHA verify check: success")
+          PY
 
       - name: Install deployment client
         run: python -m pip install --disable-pip-version-check "huggingface_hub>=0.27,<2"
