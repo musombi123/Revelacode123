@@ -1,13 +1,10 @@
-"""Safe mounting of an existing FastAPI application's routes into another app.
-
-Gradio Server subclasses FastAPI. Registering the original route objects on its
-router preserves FastAPI's dependency graphs, request validation and OpenAPI
-metadata without creating an intermediate APIRouter.
-"""
+"""Mount FastAPI routes and refresh the target OpenAPI schema."""
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from typing import Any
+
+from fastapi import APIRouter
 
 
 def _route_methods(route: Any) -> set[str]:
@@ -32,17 +29,24 @@ def mount_fastapi_routes(
     excluded_paths: Iterable[str] = (),
     required_routes: Mapping[str, Iterable[str]] | None = None,
 ) -> int:
-    """Mount source routes directly on target and verify their OpenAPI contract.
+    """Include source FastAPI routes and rebuild the target OpenAPI schema.
 
-    The operation is intentionally fail-closed: missing source routes, route
-    collisions, or routes absent from the generated OpenAPI schema raise
-    RuntimeError during application startup rather than silently shipping a
-    partially mounted API.
+    FastAPI route registration and OpenAPI generation are separate concerns.
+    A target app may already have cached its OpenAPI schema before a router is
+    included (for example, during framework initialization). Including routes
+    does not reliably invalidate that cached document. We therefore use the
+    standard include_router API and explicitly clear openapi_schema before
+    verifying the generated schema.
+
+    The operation fails closed on missing source routes, route collisions, or
+    missing OpenAPI operations. This prevents a partially exposed Runtime API
+    from being treated as a successful Space startup.
     """
     source_router = getattr(source_app, "router", None)
     target_router = getattr(target_app, "router", None)
-    if source_router is None or target_router is None:
-        raise TypeError("Both source_app and target_app must expose a FastAPI router")
+    include_router = getattr(target_app, "include_router", None)
+    if source_router is None or target_router is None or not callable(include_router):
+        raise TypeError("Both applications must expose compatible FastAPI routers")
 
     excluded = set(excluded_paths)
     source_routes = [
@@ -68,10 +72,15 @@ def mount_fastapi_routes(
         formatted = ", ".join(f"{method} {path}" for path, method in collisions)
         raise RuntimeError(f"Refusing to shadow existing target routes: {formatted}")
 
-    # Register the original FastAPI route objects directly on Gradio Server's
-    # FastAPI router. This retains dependencies, response models and schema
-    # metadata exactly as defined by the Runtime service.
-    target_router.routes.extend(source_routes)
+    # Use FastAPI's supported router inclusion path so route metadata,
+    # dependency graphs, validation and response models are registered by
+    # FastAPI itself.
+    runtime_router = APIRouter()
+    runtime_router.routes.extend(source_routes)
+    include_router(runtime_router)
+
+    # The target may have cached OpenAPI before route inclusion. Force the next
+    # openapi() call to rebuild from the complete route table.
     target_app.openapi_schema = None
 
     schema = target_app.openapi()
@@ -83,6 +92,6 @@ def mount_fastapi_routes(
     )
     if missing_schema:
         formatted = ", ".join(f"{method} {path}" for path, method in missing_schema)
-        raise RuntimeError(f"Mounted Runtime routes are absent from OpenAPI: {formatted}")
+        raise RuntimeError(f"Included Runtime routes are absent from OpenAPI: {formatted}")
 
     return len(source_routes)
