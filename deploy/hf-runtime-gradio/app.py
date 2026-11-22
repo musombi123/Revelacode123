@@ -11,9 +11,31 @@ os.environ.setdefault("GRADIO_SSR_MODE", "false")
 # Import ZeroGPU support before Gradio or any libraries that may initialize
 # CUDA. The registered probe below is not used by ordinary Runtime requests.
 import spaces
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from gradio import Server
 from vorax.hf_runtime import app as service_app
+from vorax.runtime_route_mount import mount_fastapi_routes
+
+
+_REQUIRED_RUNTIME_ROUTES = {
+    "/health": {"GET"},
+    "/vorax/home-index": {"GET"},
+    "/vorax/x": {"POST"},
+    "/vorax/verify": {"POST"},
+    "/vorax/learn": {"POST"},
+    "/vorax/vault/reconcile": {"POST"},
+    "/vorax/cycle/start": {"POST"},
+    "/vorax/cycle/pending": {"GET"},
+    "/vorax/cycle/status": {"GET", "POST"},
+    "/vorax/cycle/hunter-report": {"POST"},
+}
+_RESERVED_SERVER_PATHS = {
+    "/",
+    "/openapi.json",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/redoc",
+}
 
 # Gradio Server exposes FastAPI-compatible lifecycle hooks through its
 # constructor. Preserve Runtime's startup Vault/Home reconciliation.
@@ -50,15 +72,15 @@ def run_zerogpu_startup_compat(child_id: str, api_key: str) -> dict:
     return _zerogpu_startup_compat()
 
 
-api_router = APIRouter()
-_RESERVED_SERVER_PATHS = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
-for route in service_app.router.routes:
-    if getattr(route, "path", None) not in _RESERVED_SERVER_PATHS:
-        api_router.routes.append(route)
-
-# Preserve original Runtime endpoint objects and all authentication,
-# validation, request and response contracts.
-app.include_router(api_router)
+# Include the original FastAPI routes through FastAPI's standard router API.
+# The helper invalidates any previously cached OpenAPI schema, rebuilds it,
+# and verifies required HTTP methods before the Space can start.
+_mounted_runtime_routes = mount_fastapi_routes(
+    source_app=service_app,
+    target_app=app,
+    excluded_paths=_RESERVED_SERVER_PATHS,
+    required_routes=_REQUIRED_RUNTIME_ROUTES,
+)
 
 
 @app.get("/", tags=["service"])
@@ -72,6 +94,7 @@ def service_root():
         "verify": "/vorax/verify",
         "home_index": "/vorax/home-index",
         "docs": "/docs",
+        "runtime_routes_mounted": _mounted_runtime_routes,
         "home_method_bodies_loaded": False,
     }
 

@@ -25,19 +25,27 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn("writes directly to Home `main`", readme)
 
     def test_adapters_use_supported_gradio_server_mode_and_preserve_fastapi_routes(self):
-        for relative in (
-            "deploy/hf-teacher-gradio/app.py",
-            "deploy/hf-runtime-gradio/app.py",
-        ):
-            source = self._read(relative)
-            ast.parse(source, filename=relative)
-            self.assertIn("from gradio import Server", source)
-            self.assertIn("app = Server(", source)
-            self.assertIn("app.include_router(api_router)", source)
-            self.assertIn("service_app.router.routes", source)
-            self.assertIn("demo = app", source)
-            self.assertIn("demo.launch(ssr_mode=False)", source)
-            self.assertIn('os.environ.setdefault("GRADIO_SSR_MODE", "false")', source)
+        teacher = self._read("deploy/hf-teacher-gradio/app.py")
+        ast.parse(teacher, filename="deploy/hf-teacher-gradio/app.py")
+        self.assertIn("from gradio import Server", teacher)
+        self.assertIn("app = Server(", teacher)
+        self.assertIn("app.include_router(api_router)", teacher)
+        self.assertIn("service_app.router.routes", teacher)
+        self.assertIn("demo = app", teacher)
+        self.assertIn("demo.launch(ssr_mode=False)", teacher)
+        self.assertIn('os.environ.setdefault("GRADIO_SSR_MODE", "false")', teacher)
+
+        runtime = self._read("deploy/hf-runtime-gradio/app.py")
+        ast.parse(runtime, filename="deploy/hf-runtime-gradio/app.py")
+        self.assertIn("from gradio import Server", runtime)
+        self.assertIn("app = Server(", runtime)
+        self.assertIn("from vorax.runtime_route_mount import mount_fastapi_routes", runtime)
+        self.assertIn("target_app=app", runtime)
+        self.assertIn("required_routes=_REQUIRED_RUNTIME_ROUTES", runtime)
+        self.assertNotIn("app.include_router(api_router)", runtime)
+        self.assertIn("demo = app", runtime)
+        self.assertIn("demo.launch(ssr_mode=False)", runtime)
+        self.assertIn('os.environ.setdefault("GRADIO_SSR_MODE", "false")', runtime)
 
     def test_adapters_register_private_authenticated_zerogpu_startup_probe(self):
         for relative in (
