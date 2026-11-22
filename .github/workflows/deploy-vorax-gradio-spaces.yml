@@ -144,16 +144,35 @@ jobs:
               raise SystemExit("Runtime readiness or Home metadata-only boundary failed.")
           status, spec = get_json("https://musombi-vorax-runtime-service.hf.space/openapi.json")
           paths = spec.get("paths", {})
-          required = {"/vorax/cycle/start", "/vorax/cycle/pending", "/vorax/cycle/status"}
-          missing = sorted(required - set(paths))
+          required = {
+              "/health": {"get"},
+              "/vorax/home-index": {"get"},
+              "/vorax/x": {"post"},
+              "/vorax/verify": {"post"},
+              "/vorax/learn": {"post"},
+              "/vorax/vault/reconcile": {"post"},
+              "/vorax/cycle/start": {"post"},
+              "/vorax/cycle/pending": {"get"},
+              "/vorax/cycle/status": {"get", "post"},
+              "/vorax/cycle/hunter-report": {"post"},
+          }
+          missing = {
+              path: sorted(methods - set(paths.get(path, {})))
+              for path, methods in required.items()
+              if methods - set(paths.get(path, {}))
+          }
           if missing:
-              raise SystemExit("Runtime deployment is missing weekly routes: " + ", ".join(missing))
+              details = "; ".join(
+                  f"{path}: missing {', '.join(methods)}"
+                  for path, methods in sorted(missing.items())
+              )
+              raise SystemExit("Runtime OpenAPI route contract is incomplete: " + details)
           print(json.dumps({
               "status": "deployed_and_verified",
               "home_commit": os.environ["HOME_COMMIT"],
               "teacher_health": "ok",
               "runtime_health": "ready",
-              "weekly_routes": sorted(required),
+              "runtime_routes": {path: sorted(methods) for path, methods in required.items()},
               "billable_inference_allowed": False,
               "weights_downloaded": False,
               "local_model_loaded": False,
