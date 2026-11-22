@@ -122,24 +122,47 @@ jobs:
               with urllib.request.urlopen(req, timeout=20) as response:
                   return response.status, json.loads(response.read().decode("utf-8"))
 
-          def wait_health(url, label):
-              deadline = time.monotonic() + 900
+          def space_diagnostics(repo_id):
+              try:
+                  runtime = api.get_space_runtime(repo_id)
+                  stage = getattr(runtime, "stage", None)
+                  hardware = getattr(runtime, "hardware", None)
+                  raw = getattr(runtime, "raw", None)
+                  return {"stage": str(stage), "hardware": str(hardware), "raw": raw}
+              except Exception as exc:
+                  return {"diagnostics_error": f"{type(exc).__name__}: {exc}"}
+
+          def wait_health(url, label, repo_id):
+              deadline = time.monotonic() + 600
               last = "not checked"
+              next_diag = 0
               while time.monotonic() < deadline:
                   try:
                       status, payload = get_json(url)
                       if status == 200 and payload.get("status") == "ok":
+                          print(f"{label} health: HTTP 200, status=ok")
                           return payload
-                      last = f"HTTP {status}, payload not ready"
+                      last = f"HTTP {status}; payload={str(payload)[:500]}"
+                  except urllib.error.HTTPError as exc:
+                      body = ""
+                      try:
+                          body = exc.read().decode("utf-8", errors="replace")[:500]
+                      except Exception:
+                          pass
+                      last = f"HTTP {exc.code} {exc.reason}; body={body!r}"
                   except Exception as exc:
-                      last = type(exc).__name__
+                      last = f"{type(exc).__name__}: {exc}"
+                  if time.monotonic() >= next_diag:
+                      print(f"{label} health pending: {last}")
+                      print(f"{label} Space runtime diagnostics: {json.dumps(space_diagnostics(repo_id), default=str)[:1500]}")
+                      next_diag = time.monotonic() + 45
                   time.sleep(15)
-              raise SystemExit(f"{label} health did not recover within 15 minutes: {last}")
+              raise SystemExit(f"{label} health timed out after 10 minutes. Last response: {last}. Space diagnostics: {json.dumps(space_diagnostics(repo_id), default=str)[:2000]}")
 
-          teacher_health = wait_health("https://musombi-vorax-teacher-service.hf.space/health", "Teacher")
+          teacher_health = wait_health("https://musombi-vorax-teacher-service.hf.space/health", "Teacher", teacher_id)
           if teacher_health.get("free_provider_only") is not True or teacher_health.get("billable_inference_allowed") is not False:
               raise SystemExit("Teacher free-provider-only policy is not active.")
-          runtime_health = wait_health("https://musombi-vorax-runtime-service.hf.space/health", "Runtime")
+          runtime_health = wait_health("https://musombi-vorax-runtime-service.hf.space/health", "Runtime", runtime_id)
           if runtime_health.get("ready") is not True or runtime_health.get("home_method_bodies_loaded") is not False:
               raise SystemExit("Runtime readiness or Home metadata-only boundary failed.")
           status, spec = get_json("https://musombi-vorax-runtime-service.hf.space/openapi.json")
