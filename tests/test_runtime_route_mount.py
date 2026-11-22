@@ -32,6 +32,10 @@ class RuntimeRouteMountTests(unittest.TestCase):
     def test_all_runtime_routes_mount_and_appear_in_openapi(self):
         target_app = FastAPI(title="Test Gradio Server target")
 
+        # Reproduce Gradio Server having generated its initial OpenAPI schema
+        # before the Runtime routes are included.
+        self.assertNotIn("/vorax/cycle/start", target_app.openapi()["paths"])
+
         mounted_count = mount_fastapi_routes(
             runtime_service_app,
             target_app,
