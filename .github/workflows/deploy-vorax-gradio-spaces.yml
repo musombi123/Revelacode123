@@ -138,17 +138,36 @@ jobs:
               except Exception as exc:
                   return {"diagnostics_error": f"{type(exc).__name__}: {exc}"}
 
-          def wait_health(url, label, repo_id):
+          def readiness_summary(payload):
+              # Health responses contain only booleans/status metadata here; never print credentials.
+              return {
+                  "status": payload.get("status"),
+                  "service": payload.get("service"),
+                  "ready": payload.get("ready"),
+                  "home_index": payload.get("home_index"),
+                  "vault_status": (payload.get("vault") or {}).get("status"),
+                  "required_secrets": payload.get("required_secrets"),
+                  "teacher_peer": payload.get("teacher_peer"),
+                  "home_method_bodies_loaded": payload.get("home_method_bodies_loaded"),
+                  "free_provider_only": payload.get("free_provider_only"),
+                  "billable_inference_allowed": payload.get("billable_inference_allowed"),
+              }
+
+          def wait_health(url, label, repo_id, require_ready=False):
               deadline = time.monotonic() + 600
               last = "not checked"
+              last_payload = {}
               next_diag = 0
               while time.monotonic() < deadline:
                   try:
                       status, payload = get_json(url)
-                      if status == 200 and payload.get("status") == "ok":
-                          print(f"{label} health: HTTP 200, status=ok")
+                      last_payload = payload
+                      healthy = status == 200 and payload.get("status") == "ok"
+                      ready = not require_ready or payload.get("ready") is True
+                      if healthy and ready:
+                          print(f"{label} health accepted: {json.dumps(readiness_summary(payload), default=str)}")
                           return payload
-                      last = f"HTTP {status}; payload={str(payload)[:500]}"
+                      last = f"HTTP {status}; readiness={json.dumps(readiness_summary(payload), default=str)[:1200]}"
                   except urllib.error.HTTPError as exc:
                       body = ""
                       try:
@@ -163,14 +182,23 @@ jobs:
                       print(f"{label} Space runtime diagnostics: {json.dumps(space_diagnostics(repo_id), default=str)[:1500]}")
                       next_diag = time.monotonic() + 45
                   time.sleep(15)
-              raise SystemExit(f"{label} health timed out after 10 minutes. Last response: {last}. Space diagnostics: {json.dumps(space_diagnostics(repo_id), default=str)[:2000]}")
+              raise SystemExit(
+                  f"{label} health timed out after 10 minutes. Last response: {last}. "
+                  f"Last readiness payload: {json.dumps(readiness_summary(last_payload), default=str)}. "
+                  f"Space diagnostics: {json.dumps(space_diagnostics(repo_id), default=str)[:2000]}"
+              )
 
           teacher_health = wait_health("https://musombi-vorax-teacher-service.hf.space/health", "Teacher", teacher_id)
           if teacher_health.get("free_provider_only") is not True or teacher_health.get("billable_inference_allowed") is not False:
               raise SystemExit("Teacher free-provider-only policy is not active.")
-          runtime_health = wait_health("https://musombi-vorax-runtime-service.hf.space/health", "Runtime", runtime_id)
-          if runtime_health.get("ready") is not True or runtime_health.get("home_method_bodies_loaded") is not False:
-              raise SystemExit("Runtime readiness or Home metadata-only boundary failed.")
+          runtime_health = wait_health(
+              "https://musombi-vorax-runtime-service.hf.space/health",
+              "Runtime",
+              runtime_id,
+              require_ready=True,
+          )
+          if runtime_health.get("home_method_bodies_loaded") is not False:
+              raise SystemExit("Runtime Home metadata-only boundary failed.")
           status, spec = get_json("https://musombi-vorax-runtime-service.hf.space/openapi.json")
           paths = spec.get("paths", {})
           required = {
