@@ -30,13 +30,17 @@ See **docs/vorax/huggingface-services.md** for service routes, secrets, deployme
 
 - Teacher Space: **deploy/hf-teacher-gradio/**
 - Runtime Space: **deploy/hf-runtime-gradio/**
-- Deployment: **scripts/deploy_hf_zerogpu_children.py**
+- Primary Gradio/ZeroGPU deployment: **.github/workflows/deploy-vorax-gradio-spaces.yml**
+- Local deployment fallback: **scripts/deploy_hf_zerogpu_children.py**
 - Read-only Vault check: **scripts/verify_hf_vault.py**
-- Release-gated deploy workflow: **.github/workflows/deploy-hf-two-children.yml**
 
-The legacy **.github/workflows/deploy-hf-child.yml** is not the deployment path for the two-service architecture. Do not reuse the old **Musombi/revelacode-vorax-child** Space or overwrite unrelated Spaces.
+The primary workflow is manually dispatched from **main**, requires the exact confirmation phrase **DEPLOY-VORAX-GRAPH-2026**, and requires a successful **verify** check on the exact commit being deployed. Its GitHub Actions secret **HF_SPACE_TOKEN** must authenticate as **Musombi**. It updates only the two existing public Gradio Spaces; it refuses to create or convert Spaces, alter visibility or hardware, or replace the existing private Dataset. It preserves existing Space secrets and does not run remote inference or start Kaggle.
 
-The deployment script never creates or converts a Dataset. It verifies the existing **Musombi/revelacode-vorax-vault** as a private Dataset, checks for model weights/architecture configs, uploads the two Gradio/ZeroGPU Space contexts, and tests health/metadata/Runtime identity routes. A real multi-model teacher run is performed only by an explicitly started Kaggle learning session. Manual local deployment approval is supported for deployment only; it does not substitute for trusted CI evidence on knowledge pull requests.
+The local script is an alternative operator-controlled route. It requires a clean, current **main** branch, runs the focused packaging tests and full test suite, and requires typed approval of the exact commit SHA. It configures the service secrets, verifies the existing private Dataset read-only, packages the Gradio services and runs Teacher metadata-discovery plus authenticated Runtime identity smoke tests. Do not run the local and GitHub Actions deployment paths concurrently.
+
+The older tag-based **.github/workflows/deploy-hf-two-children.yml** is a Docker deployment path, not the current Gradio/ZeroGPU release path. Do not dispatch it for the current two Spaces. The legacy **.github/workflows/deploy-hf-child.yml** and **Musombi/revelacode-vorax-child** Space are also not part of the current architecture. Do not overwrite unrelated Spaces or create a replacement Vault.
+
+A successful Space upload is not proof that VORAX has completed a learning cycle. A real multi-model Teacher run is performed only by an explicitly started learning session, and a learned capability remains pending until Runtime verification, an isolated Home pull request, trusted CI, human review, merge and exact-digest reconciliation all succeed.
 
 ## Trust and Vault policy
 
