@@ -54,3 +54,8 @@ python -m compileall -q vorax scripts tests
 ~~~
 
 The Hugging Face deployment is not live until the two Space /health endpoints and their required service smoke tests return successfully. A green code PR alone is not proof of deployment. Only GitHub Home can authorize GO.
+
+
+## Repository governance and licence
+
+Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and code/infrastructure changes must follow [CONTRIBUTING.md](CONTRIBUTING.md). Original VORAX source and materials are proprietary; see [LICENSE](LICENSE). Third-party components remain under their respective licences.
