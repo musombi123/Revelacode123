@@ -85,8 +85,8 @@ changed_paths = {item.get("filename", "") for item in files}
 non_data_paths = {path for path in changed_paths if allowed(path) is None}
 if non_data_paths:
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-        output.write("eligible=false\\n")
-        output.write("checked_files=0\\n")
+        output.write("eligible=false\n")
+        output.write("checked_files=0\n")
     print(
         "INFO: non-data/code PR detected; data-only auto-merge validation skipped: "
         + ", ".join(sorted(non_data_paths))
