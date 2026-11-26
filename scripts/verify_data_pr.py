@@ -79,6 +79,20 @@ if head_repo.get("full_name") != repo:
     fail("only same-repository data-only proposals are eligible")
 files = get(f"/repos/{repo}/pulls/{number}/files?per_page=100")
 changed_paths = {item.get("filename", "") for item in files}
+
+# This workflow is triggered when a PR touches at least one data-eligible path.
+# Mixed/code PRs can also touch those paths, but must never enter the data-only
+# auto-merge lane. Leave them to ordinary engineering CI and human review.
+non_data_paths = {path for path in changed_paths if allowed(path) is None}
+if non_data_paths:
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write("eligible=false\n")
+        output.write("checked_files=0\n")
+    print(
+        "INFO: mixed/code PR detected; data-only auto-merge skipped: "
+        + ", ".join(sorted(non_data_paths))
+    )
+    raise SystemExit(0)
 if "templates/library/index.json" in changed_paths:
     # Child method + index proposals are validated by the stricter V-Lang gate, not this JSON-only gate.
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
