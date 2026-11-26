@@ -130,6 +130,23 @@ class HuggingFaceZeroGpuPackageTests(unittest.TestCase):
         self.assertIn('"VORAX_ALLOW_BILLABLE_INFERENCE": "false"', source)
         self.assertNotIn('space_hardware="cpu-basic"', source)
 
+    def test_local_deploy_script_packages_teacher_with_relative_import_context(self):
+        source = self._read("scripts/deploy_hf_zerogpu_children.py")
+        tree = ast.parse(source)
+        builder = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "build_teacher_package"
+        )
+        builder_source = ast.get_source_segment(source, builder) or ""
+        adapter = self._read("deploy/hf-teacher-gradio/app.py")
+
+        self.assertIn("from vorax.hf_teacher import app as service_app", adapter)
+        self.assertIn('teacher_package = target / "vorax"', builder_source)
+        self.assertIn("teacher_package.mkdir()", builder_source)
+        for filename in ("__init__.py", "hf_teacher.py", "network.py"):
+            self.assertIn(filename, builder_source)
+        self.assertNotIn('target / "hf_teacher.py"', builder_source)
+
     def test_deploy_script_adds_repository_root_before_importing_vorax(self):
         source = self._read("scripts/deploy_hf_zerogpu_children.py")
         root_line = source.index('ROOT = Path(__file__).resolve().parents[1]')
