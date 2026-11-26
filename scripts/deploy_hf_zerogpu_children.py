@@ -228,10 +228,19 @@ def assert_weight_free(folder: Path) -> None:
 
 
 def build_teacher_package(target: Path) -> None:
+    """Build the Teacher Space with the package context required by its adapter."""
     source = ROOT / "deploy" / "hf-teacher-gradio"
     for filename in ("README.md", "requirements.txt", "app.py"):
         shutil.copy2(source / filename, target / filename)
-    shutil.copy2(ROOT / "vorax" / "hf_teacher.py", target / "hf_teacher.py")
+
+    # hf_teacher.py uses package-relative imports (for example, .network).
+    # The Gradio adapter imports it as vorax.hf_teacher, so upload the
+    # canonical package files rather than flattening hf_teacher.py at root.
+    teacher_package = target / "vorax"
+    teacher_package.mkdir()
+    for filename in ("__init__.py", "hf_teacher.py", "network.py"):
+        shutil.copy2(ROOT / "vorax" / filename, teacher_package / filename)
+
     assert_weight_free(target)
 
 
