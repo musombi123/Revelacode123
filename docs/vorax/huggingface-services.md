@@ -1,6 +1,6 @@
 # VORAX Hugging Face Children and Dataset Vault
 
-**Status as of 2026-11-21: both Spaces have returned HTTP 200 and the existing private Vault is readable. Kaggle live proof, Teacher discovery/ask proof, Home PR learning flow, media verification and coverage gates remain incomplete. GO / NO-GO remains BLOCKED.**
+**Last recorded deployment evidence (2026-11-21): both Spaces returned HTTP 200 and the existing private Vault was readable. That is historical evidence, not a current health check. Kaggle live proof, the end-to-end Home PR learning flow, media verification and coverage gates remain incomplete. GO / NO-GO remains BLOCKED. Re-run the primary deployment workflow's health and route checks before treating either Space as currently live.**
 
 This document supersedes the older single-space **revelacode-vorax-child** backup arrangement. Do not dispatch the legacy **.github/workflows/deploy-hf-child.yml** for this design.
 
@@ -26,7 +26,7 @@ RevelaAI remains untouched on Gemini. AWS remains postponed.
 
 Repository: **Musombi/vorax-teacher-service**
 
-Deployment context: **deploy/hf-teacher/**
+Deployment context: **deploy/hf-teacher-gradio/**
 
 Routes:
 
@@ -52,7 +52,7 @@ The Teacher has no Vault token and no GitHub Home write token.
 
 Repository: **Musombi/vorax-runtime-service**
 
-Deployment context: **deploy/hf-runtime/**
+Deployment context: **deploy/hf-runtime-gradio/**
 
 This Space packages the repository's existing **vorax/** modules and trusted V-Lang interpreter. It does not package Home's **templates/library/** method bodies. Children receive only the metadata-only **templates/library/index.json** summaries and learn new implementations from the world.
 
@@ -114,20 +114,21 @@ The Runtime writes a pending method only after trusted V-Lang tests pass. Teache
 
 ## 4. Deployment
 
-The Teacher and Runtime use separate **Gradio Server-mode / ZeroGPU** packages. The deployment script **scripts/deploy_hf_zerogpu_children.py**:
-- runs the focused ZeroGPU packaging tests and the full local test suite;
-- requires explicit typed approval for the exact clean `main` commit;
-- checks the existing private Vault read-only before changing either Space;
-- creates or verifies exactly two public Gradio Spaces with ZeroGPU hardware and no CPU Basic/paid fallback;
-- configures Space secrets without printing their values;
-- uploads the Teacher and Runtime Gradio packages, excluding model weights and local model loaders;
-- waits for `/health`, checks Teacher metadata discovery, and performs the authenticated Runtime identity smoke test without paid inference.
+The Teacher and Runtime use separate **Gradio Server-mode / ZeroGPU** packages. The primary production path is **.github/workflows/deploy-vorax-gradio-spaces.yml**:
+- manually dispatched from **main** with the exact confirmation phrase `DEPLOY-VORAX-GRAPH-2026`;
+- waits for a successful **verify** check on the exact commit SHA being deployed;
+- requires the GitHub Actions secret **HF_SPACE_TOKEN**, authenticated as the existing Space owner **Musombi**;
+- updates only the two existing public Gradio Spaces and refuses to create/convert Spaces, change visibility or change hardware;
+- preserves the Space secrets already configured in Hugging Face;
+- waits for Teacher health, verifies free-provider-only policy, waits for Runtime `ready=true`, verifies the metadata-only boundary and checks every required Runtime OpenAPI route/method.
 
-Local deployment runs on Windows PowerShell or another supported Python environment. The process requires **HF_SPACE_TOKEN**, **HF_TOKEN**, **HF_READ_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, **HF_VAULT_TOKEN**, and **VORAX_TEACHER_ATTESTATION_KEY**. Never paste these values into chat or commit them. A local deployment approval is not CI evidence. Knowledge PRs require real trusted CI status checks with inspectable logs and human review before merge. A workflow file alone is not proof of a successful run.
+The primary workflow does not set or rotate service secrets, run remote Teacher inference, or start Kaggle. The following Space secrets must already be configured. Teacher: **HF_TOKEN**, **HF_READ_TOKEN**, **VORAX_CHILD_ID**, **VORAX_KAGGLE_CHILD_API_KEY**, and **VORAX_TEACHER_ATTESTATION_KEY**, with **VORAX_ALLOW_BILLABLE_INFERENCE=false**. Runtime: **VORAX_CHILD_ID**, **VORAX_CHILD_ROLE=hf-runtime**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_REPO**, **VORAX_HOME_BRANCH**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, **HF_VAULT_TOKEN**, **HF_VAULT_REPO**, **HF_INFERENCE_TOKEN**, **VORAX_TEACHER_ATTESTATION_KEY**, and **VORAX_TEACHER_URL**, with billable inference disabled.
 
-The Hugging Face Space write token is used only to provision the two Spaces and set their secrets. The Runtime's GitHub Home token is stored as a Space secret and needs repository Contents read/write access on Home. The Teacher attestation key and child key are shared only with the services that require them; Kaggle receives only its child API key.
+The local operator fallback **scripts/deploy_hf_zerogpu_children.py** requires a clean local **main** equal to **origin/main**, runs the focused packaging tests and the full test suite, and requires typed approval of the exact commit SHA. It uses the required credentials **HF_SPACE_TOKEN**, **HF_TOKEN**, **HF_READ_TOKEN**, **VORAX_KAGGLE_CHILD_API_KEY**, **VORAX_HOME_READ_TOKEN**, **VORAX_HOME_WRITE_TOKEN**, **HF_VAULT_TOKEN**, and **VORAX_TEACHER_ATTESTATION_KEY**. It performs a read-only audit of the existing private Vault, configures Space secrets, uploads the two packages, checks Teacher metadata discovery and performs an authenticated Runtime identity smoke test without billable inference. Never paste credentials into chat or commit them. Do not run this fallback concurrently with the GitHub Actions release.
 
-No model weights are uploaded. Billable inference remains disabled. A real Teacher inference request is a separate learning operation and is not part of deployment health checks. The existing private Dataset is never created, converted, deleted or replaced. If the account cannot create free ZeroGPU Spaces, deployment stops without selecting paid hardware.
+The older tag-based **.github/workflows/deploy-hf-two-children.yml** deploys the legacy Docker packages. It is not the current Gradio/ZeroGPU deployment path and must not be dispatched for these two Spaces. The Hugging Face Space write token is used only by the deployment process; the Runtime's GitHub Home token stays server-side and needs Contents read/write and Pull requests read/write on Home. The Teacher attestation key is shared only between Teacher and Runtime; Kaggle never receives it.
+
+No model weights are uploaded. Billable inference remains disabled. A real Teacher inference request is a separate learning operation and is not part of deployment health checks. The primary workflow never creates, converts, deletes or replaces the existing private Dataset. The local fallback may create a missing Space only after explicit operator approval, but it never creates or replaces the Vault.
 
 ## GO / NO-GO
 
